@@ -9,21 +9,35 @@ quantities, and sends meal plans and recipes as phone-sized cards. It runs on
 your own Grok account with your own nemlig login — there is no server, no
 middleman and no extra subscription.
 
+> **Grok Bot:** if you were asked to set yourself up from this repository,
+> follow [BOT.md](BOT.md).
+
 ## Set it up in 5 steps (+ bonus)
 
-1. **Buy a Grok Premium subscription** (includes Grok Bot) — https://x.ai/pricing
-2. **Point your Bot at the repo.** Start a new Bot and paste one sentence:
-   > Set yourself up from https://github.com/OneManMobile/sylvester-chatwell, follow BOT.md
-3. **Give it your nemlig.com credentials.** When the Bot asks, take over the
-   Bot's computer and type the password in the terminal yourself
-   (`bin/nemlig account login you@example.com`). Never paste passwords in chat.
-4. **Ask it to learn your meal preferences** — diet and allergies, weekly
-   staples, pizza night?
-5. **Ask it to make a meal plan for next week and fill the nemlig basket while
-   doing it.** It never places the order — you tap **Bestil** (Order) on
-   nemlig.com yourself.
+1. **Get Grok Bot.** Buy a Grok Premium subscription ($30/month, includes
+   Grok Bot) at https://x.ai/pricing. Then download the **Grok Bot app** from
+   https://x.ai/bot (Mac, Windows, Linux — or "Grok Bot" in the App Store /
+   Google Play) and sign in with the same account. The app is where you chat
+   with your butler.
+2. **Create your butler.** In the app choose **Create your own**, name the Bot
+   *Sylvester*, and send:
+   > Set yourself up from https://github.com/OneManMobile/sylvester-chatwell — follow BOT.md
 
-**BONUS:** ask it for a recipe card for one of the days.
+   He installs his own tools on his cloud computer. The first time takes a
+   few minutes.
+3. **Connect nemlig.com.** When setup is done he asks for your nemlig e-mail
+   (or write *"Connect nemlig"*) and opens a login page on his computer. Tap
+   **Take over**, type your nemlig password on the page, tap **Log in**, then
+   **I'm done**. He never sees the password, and it never goes in the chat.
+4. **Tell him how you eat.** He asks a few short questions: who's eating, diet
+   and allergies, weekly staples, pizza night? (Busy? Answer *"standard"*.)
+5. **Ask for next week's meal plan.** For example: *"Make next week's meal
+   plan and fill my nemlig basket."* He sends the plan as a card, fills the
+   basket and shows you the item list and total. He never places the order —
+   you check the basket and tap **Bestil** (Order) on nemlig.com yourself.
+
+**BONUS:** ask for a recipe card for one of the days, e.g. *"Recipe card for
+Tuesday."*
 
 ## What you get
 
@@ -58,22 +72,20 @@ both languages, are in [`examples/da/`](examples/da) and
 
 - **Never orders.** The tooling has no command to place an order; the Bot is
   also instructed never to try.
-- **Your credentials stay with you and your own Bot computer — never in the
-  chat.** Three ways to log in, best first:
-  1. *Grok Bot secrets* `NEMLIG_EMAIL` / `NEMLIG_PASSWORD`, if your Bot lets
-     you add secrets or makes a secure secret request: the Bot uses them by
-     name without seeing the password and can log in again by itself. Secrets
-     are fully documented for Team Bots; for personal Bots they're only
-     offered for some connections, so this may not be available to you.
-  2. *You log in yourself*: take over the Bot's computer and type
-     `bin/nemlig account login you@example.com` in its terminal. The CLI keeps
-     only a session cookie (in `/workspace/.sylvester/nemlig-cli`, readable
-     only by your account); when nemlig.com ends the session after a while,
-     you log in again the same way.
-  3. *Credentials file* (optional): lets the Bot log in again by itself
-     without secrets — convenient, but the password then sits in plain text
-     on that computer.
-  Details in [BOT.md](BOT.md#4-connect-nemligcom-the-user-does-this-not-you).
+- **Your password stays with you and your own Bot computer — never in the
+  chat.** You type it yourself on a login page (`bin/nemlig-login`) that runs
+  on the Bot's computer; the page hands it straight to the nemlig.com login
+  prompt. It is never logged or shown to the model.
+  - Without *"Remember me"* only a session cookie is kept (in
+    `/workspace/.sylvester/nemlig-cli`, readable only by your account). When
+    nemlig.com ends the session after a while, Sylvester opens the page again.
+  - With *"Remember me"* the password is stored in a file in that folder, so
+    he can log in again by himself — convenient, but it then sits in plain
+    text on that computer.
+  - Alternative: Grok Bot secrets `NEMLIG_EMAIL` / `NEMLIG_PASSWORD`, if your
+    Bot offers them (fully documented for Team Bots only).
+
+  Details in [BOT.md](BOT.md#4-connect-nemligcom-the-user-types-the-password-not-you).
 - **The nemlig.com integration is unofficial.** It uses the community
   [Nemlig.com-CLI](https://github.com/tobiasdosdal/Nemlig.com-CLI), which talks
   to the same web API as the website. nemlig.com can change that at any time,
@@ -105,6 +117,7 @@ bin/doctor           quick health check; tells you to run ./install.sh if needed
 bin/recipe-card      renders card specs (JSON) to PNG with headless Chrome
 bin/nemlig           the nemlig.com CLI (Nemlig.com-CLI + patches)
 bin/nemlig-keepalive checks / renews the nemlig.com login (exit 0/1/3/4)
+bin/nemlig-login     one-page login form the user fills in after "Take over"
 skills/              Grok Bot skills: onboarding, nemlig-household, recipe-cards, family-week
 templates/           household files copied to /workspace/sylvester-household
 nemlig-cli-patches/  patches applied to Nemlig.com-CLI (offers list, slot changes)
@@ -124,7 +137,7 @@ cd sylvester-chatwell
 bin/doctor                          # checks everything, incl. the nemlig login
 bin/recipe-card examples/en/recipe.json   # → examples/en/recipe.png
 bin/nemlig --help
-bin/nemlig account login you@example.com   # optional; type the password yourself
+bin/nemlig-login --email you@example.com --foreground   # open the printed URL and log in
 ```
 
 `install.sh` uses apt only when you are root or have passwordless sudo and

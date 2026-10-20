@@ -6,24 +6,24 @@
   "kicker": "Get started in 5 steps",
   "steps": [
     {
-      "title": "Get Grok Premium",
-      "detail": "Includes Grok Bot · x.ai/pricing"
+      "title": "Get Grok Bot",
+      "detail": "Buy Grok Premium (x.ai/pricing). Get the Grok Bot app at x.ai/bot and sign in"
     },
     {
-      "title": "Point your Bot at the repo",
-      "detail": "Tell a new Bot: “Set yourself up from github.com/OneManMobile/sylvester-chatwell – follow BOT.md”"
+      "title": "Create your butler",
+      "detail": "Create a Bot named Sylvester and send: “Set yourself up from github.com/OneManMobile/sylvester-chatwell”"
     },
     {
-      "title": "Give it your nemlig.com login",
-      "detail": "Take over the Bot’s computer and type the password in its terminal – never in chat"
+      "title": "Connect nemlig.com",
+      "detail": "He opens a login page. Tap Take over, type your password, tap Log in, then I’m done"
     },
     {
-      "title": "Teach it your meal preferences",
-      "detail": "Diet and allergies, staples, pizza night?"
+      "title": "Tell him how you eat",
+      "detail": "A few short questions: who eats, diet and allergies, staples, pizza night?"
     },
     {
       "title": "Ask for next week’s meal plan",
-      "detail": "It fills your nemlig basket as it plans, but never orders – you tap Bestil yourself"
+      "detail": "“Make next week’s meal plan and fill my basket.” He never orders – you tap Bestil"
     }
   ],
   "bonus": {

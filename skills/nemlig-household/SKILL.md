@@ -30,15 +30,15 @@ Run `$R/bin/nemlig-keepalive` (no args) before the first nemlig command in a
 conversation:
 - `0` → connected: use the CLI below.
 - `3` → not connected. Run no other nemlig command. You can still plan meals
-  and make recipe cards — without offers, prices or basket. Say once per
-  conversation: "Vil du have tilbud og kurv med? Overtag min computer og skriv
-  `bin/nemlig account login <din e-mail>` i terminalen i
-  /workspace/sylvester-chatwell — adgangskoden skriver du selv, jeg ser den
-  aldrig." Asked to fill the basket → that same sentence; never pretend.
+  and make recipe cards — without offers, prices or basket. Offer once per
+  conversation: "Vil du have tilbud og kurv med? Så åbner jeg en login-side
+  til nemlig — du trykker Take over og skriver selv adgangskoden; jeg ser den
+  aldrig." On yes, connect as in BOT.md step 4 (`$R/bin/nemlig-login`). Asked
+  to fill the basket → offer that same login; never pretend.
   (If this Bot has the secrets `NEMLIG_EMAIL`/`NEMLIG_PASSWORD`, keepalive
-  logs in with them by itself — see BOT.md step 4.)
-- `1` → the stored login (secrets or credentials file) was rejected: ask them
-  to update it, or to log in by hand as above; continue as not connected.
+  logs in with them by itself.)
+- `1` → the remembered login (or secrets) was rejected: offer the login page
+  again (BOT.md step 4); continue as not connected.
 - `4` → nemlig.com unreachable: say so in one line, plan without nemlig.
 Never ask for the nemlig.com password in the chat.
 

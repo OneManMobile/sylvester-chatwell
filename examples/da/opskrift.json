@@ -1,44 +1,28 @@
 {
-  "title": "Frikadeller med kartofler og brun sovs",
-  "subtitle": "4 personer · ca. 50 min",
-  "start": [
-    "Sæt vand over til kartoflerne"
-  ],
+  "lang": "da",
+  "title": "Frikadeller med stuvet spidskål",
+  "subtitle": "4 personer · ca. 35 min",
   "tools": [
-    "Stor stegepande",
-    "Gryde m. låg",
-    "Rivejern",
+    "Stegepande",
+    "Kasserolle",
     "Skål"
   ],
   "recipe": {
-    "do": "Anret med\nkartofler og sovs.\nSalat ved siden af",
+    "do": "Anret\nfrikadellerne\nmed spidskålen",
     "with": [
       {
-        "do": "Kog 15-20 min\nmed låg på",
+        "do": "Steg 5 min\npr. side",
         "with": [
           {
-            "amount": "1 kg",
-            "name": "kartofler"
-          },
-          {
-            "amount": "1 tsk",
-            "name": "salt"
-          }
-        ]
-      },
-      {
-        "do": "Tag frikadellerne op.\nPisk mel i vand,\nkog op 3 min",
-        "with": [
-          {
-            "do": "Rør farsen, form 12 boller.\nSteg i smør 6 min pr. side",
+            "do": "Rør farsen,\nform 12 boller",
             "with": [
-              {
-                "amount": "1",
-                "name": "løg, fintrevet"
-              },
               {
                 "amount": "500 g",
                 "name": "hakket svinekød"
+              },
+              {
+                "amount": "1",
+                "name": "løg, revet"
               },
               {
                 "amount": "1",
@@ -54,43 +38,37 @@
               },
               {
                 "amount": "1 tsk",
-                "name": "salt og peber"
+                "name": "salt"
+              }
+            ]
+          },
+          {
+            "amount": "30 g",
+            "name": "smør"
+          }
+        ]
+      },
+      {
+        "do": "Simr 5 min,\nsmag til",
+        "with": [
+          {
+            "do": "Svits 3 min",
+            "with": [
+              {
+                "amount": "1",
+                "name": "spidskål, snittet"
               },
               {
-                "amount": "30 g",
+                "amount": "15 g",
                 "name": "smør"
               }
             ]
           },
           {
-            "amount": "3 dl",
-            "name": "vand"
+            "amount": "2 dl",
+            "name": "piskefløde"
           },
-          {
-            "amount": "2 spsk",
-            "name": "hvedemel"
-          },
-          {
-            "amount": "1",
-            "name": "bouillonterning"
-          }
-        ]
-      },
-      {
-        "do": "Snit tyndt, vend\nmed eddike\nog sukker",
-        "with": [
-          {
-            "amount": "1",
-            "name": "agurk"
-          },
-          {
-            "amount": "½ dl",
-            "name": "eddike"
-          },
-          {
-            "amount": "2 spsk",
-            "name": "sukker"
-          }
+          "salt og peber"
         ]
       }
     ]

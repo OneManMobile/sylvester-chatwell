@@ -371,5 +371,5 @@ if [ -z "$CHROME" ]; then
   echo "Cards can't be rendered until Chrome works (see the warning above)."
   exit 1
 fi
-echo "Next: bin/doctor — then log in to nemlig.com yourself in a terminal:"
-echo "  $REPO/bin/nemlig account login you@example.com"
+echo "Next: bin/doctor — then connect nemlig.com: run bin/nemlig-login --email <your e-mail>,"
+echo "  open the URL it prints and type your password on that page."

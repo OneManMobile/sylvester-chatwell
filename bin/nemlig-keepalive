@@ -14,14 +14,15 @@ Exit codes:
 
 When the session is missing or expired, credentials are taken from, in order:
   1. Grok Bot secrets / environment: NEMLIG_EMAIL + NEMLIG_PASSWORD
-     (preferred — the Bot uses them by name and never sees the password).
+     (the Bot uses them by name and never sees the password).
   2. Credentials file <login dir>/credentials, mode 600: line 1 e-mail,
-     line 2 password. Convenient, but the password sits in plain text on the
+     line 2 password — written by bin/nemlig-login when the user ticks
+     "Remember me". Convenient, but the password sits in plain text on the
      Bot's computer.
-  3. Nothing stored → exit 3. The user takes over the Bot's computer and types
-     in the terminal: bin/nemlig account login <email>
+  3. Nothing stored → exit 3. The user logs in on the page that
+     bin/nemlig-login opens (Take over, type the password, I'm done).
      Only a session cookie is kept; when nemlig.com ends the session, they
-     log in again the same way.
+     log in there again.
 The password is typed into the CLI's password prompt through a
 pseudo-terminal — never passed as an argument, never printed.
 The login dir is $NEMLIG_CONFIG_DIR, else $SYLVESTER_STATE/nemlig-cli, else
@@ -120,15 +121,15 @@ def main() -> int:
             lines = []
         if len(lines) < 2:
             if os.path.exists(os.path.join(directory, "session.json")):
-                print("nemlig: not connected (session expired) — log in again: bin/nemlig account login <email>")
+                print("nemlig: not connected (session expired) — log in again: bin/nemlig-login --email <email>")
             else:
-                print("nemlig: not connected — log in: bin/nemlig account login <email>")
+                print("nemlig: not connected — log in: bin/nemlig-login --email <email>")
             return 3
         email, password = lines[0], lines[1]
     if login(email, password) and status() == 0:
         print(f"nemlig: logged in again from {source}")
         return 0
-    print(f"nemlig: automatic login from {source} FAILED (password changed?) — update it, or log in by hand: bin/nemlig account login <email>")
+    print(f"nemlig: automatic login from {source} FAILED (password changed?) — log in again: bin/nemlig-login --email <email>")
     return 1
 
 

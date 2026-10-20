@@ -1,45 +1,28 @@
 {
   "lang": "en",
-  "title": "Danish meatballs with potatoes and brown gravy",
-  "subtitle": "4 servings · approx. 50 min",
-  "start": [
-    "Put water on for the potatoes"
-  ],
+  "title": "Danish meatballs with creamed pointed cabbage",
+  "subtitle": "4 servings · approx. 35 min",
   "tools": [
-    "Large frying pan",
-    "Pot with lid",
-    "Grater",
+    "Frying pan",
+    "Saucepan",
     "Bowl"
   ],
   "recipe": {
-    "do": "Serve with\npotatoes\nand gravy.\nSalad on\nthe side",
+    "do": "Serve the\nmeatballs with\nthe cabbage",
     "with": [
       {
-        "do": "Boil 15–20 min\nwith the lid on",
+        "do": "Fry 5 min\na side",
         "with": [
           {
-            "amount": "1 kg",
-            "name": "potatoes"
-          },
-          {
-            "amount": "1 tsp",
-            "name": "salt"
-          }
-        ]
-      },
-      {
-        "do": "Lift out\nmeatballs.\nWhisk flour\ninto water,\nboil 3 min",
-        "with": [
-          {
-            "do": "Mix, roll\n12 balls.\nFry 6 min\na side",
+            "do": "Mix, roll\n12 balls",
             "with": [
-              {
-                "amount": "1",
-                "name": "onion, finely grated"
-              },
               {
                 "amount": "500 g",
                 "name": "minced pork"
+              },
+              {
+                "amount": "1",
+                "name": "onion, grated"
               },
               {
                 "amount": "1",
@@ -55,43 +38,37 @@
               },
               {
                 "amount": "1 tsp",
-                "name": "salt and pepper"
+                "name": "salt"
+              }
+            ]
+          },
+          {
+            "amount": "30 g",
+            "name": "butter"
+          }
+        ]
+      },
+      {
+        "do": "Simmer\n5 min,\nseason",
+        "with": [
+          {
+            "do": "Sauté\n3 min",
+            "with": [
+              {
+                "amount": "1",
+                "name": "pointed cabbage, shredded"
               },
               {
-                "amount": "30 g",
+                "amount": "15 g",
                 "name": "butter"
               }
             ]
           },
           {
-            "amount": "3 dl",
-            "name": "water"
+            "amount": "2 dl",
+            "name": "whipping cream"
           },
-          {
-            "amount": "2 tbsp",
-            "name": "plain flour"
-          },
-          {
-            "amount": "1",
-            "name": "stock cube"
-          }
-        ]
-      },
-      {
-        "do": "Slice thinly, toss\nwith vinegar\nand sugar",
-        "with": [
-          {
-            "amount": "1",
-            "name": "cucumber"
-          },
-          {
-            "amount": "½ dl",
-            "name": "vinegar"
-          },
-          {
-            "amount": "2 tbsp",
-            "name": "sugar"
-          }
+          "salt and pepper"
         ]
       }
     ]

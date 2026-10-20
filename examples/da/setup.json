@@ -6,24 +6,24 @@
   "kicker": "Kom i gang på 5 trin",
   "steps": [
     {
-      "title": "Køb Grok Premium",
-      "detail": "Inkluderer Grok Bot · x.ai/pricing"
+      "title": "Hent Grok Bot",
+      "detail": "Køb Grok Premium på x.ai/pricing, hent appen Grok Bot (x.ai/bot) og log ind"
     },
     {
-      "title": "Peg din Bot på repoet",
-      "detail": "Skriv i en ny Bot: “Sæt dig selv op fra github.com/OneManMobile/sylvester-chatwell – følg BOT.md”"
+      "title": "Opret din butler",
+      "detail": "Opret en Bot ved navn Sylvester og skriv: “Sæt dig op fra github.com/OneManMobile/sylvester-chatwell”"
     },
     {
-      "title": "Giv den dit nemlig.com-login",
-      "detail": "Overtag Bottens computer og skriv selv kodeordet i terminalen – aldrig i chatten"
+      "title": "Forbind nemlig.com",
+      "detail": "Han åbner en login-side. Tryk Take over, skriv din adgangskode, tryk Log ind og så I’m done"
     },
     {
-      "title": "Lær den jeres madvaner",
-      "detail": "Kost og allergier, faste basisvarer, pizzaaften?"
+      "title": "Fortæl, hvordan I spiser",
+      "detail": "Et par korte spørgsmål: hvem spiser med, kost og allergier, basisvarer, pizzaaften?"
     },
     {
-      "title": "Få en madplan for næste uge",
-      "detail": "Den fylder nemlig-kurven undervejs, men bestiller aldrig – du trykker selv Bestil"
+      "title": "Bed om næste uges madplan",
+      "detail": "“Lav næste uges madplan og fyld kurven.” Han bestiller aldrig – du trykker selv Bestil"
     }
   ],
   "bonus": {

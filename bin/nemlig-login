@@ -1,0 +1,289 @@
+#!/bin/sh
+''':'
+py="$(dirname "$0")/../.venv/bin/python"
+[ -x "$py" ] || py=python3
+exec "$py" "$0" "$@"
+'''
+"""Connect nemlig.com through a one-page login form on the Bot's own computer.
+
+Grok Bot's way to hand a password to the user is "Take over": the Bot opens a
+login page in its browser, the user takes control, types the password and
+chooses "I'm done". This tool serves that page, so the password goes from the
+user's fingers into the nemlig CLI's password prompt — never into the chat,
+the model, a log, argv or an environment variable.
+
+Usage:
+  bin/nemlig-login [--email ADDRESS] [--lang da|en] [--port N] [--minutes N]
+                   [--foreground]
+
+By default it starts in the background and prints one JSON line:
+  {"url": "http://127.0.0.1:8765/<token>", "pid": 1234, "expires_in_min": 15}
+Open that URL in the Bot's browser and ask the user to take over. The page
+closes itself after a successful login, 5 failed attempts or --minutes.
+Check the result with bin/nemlig-keepalive (exit 0 = signed in).
+
+"Remember me" (off by default) also stores e-mail + password in
+<login dir>/credentials (mode 600) so bin/nemlig-keepalive can log in again by
+itself when nemlig.com ends the session. Without it only the session is kept.
+"""
+import argparse
+import html
+import importlib.machinery
+import importlib.util
+import json
+import os
+import secrets
+import socket
+import sys
+import threading
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+MAX_ATTEMPTS = 5
+
+# Reuse the login/status logic (pseudo-terminal password prompt) from keepalive.
+_loader = importlib.machinery.SourceFileLoader("nemlig_keepalive", os.path.join(HERE, "nemlig-keepalive"))
+_spec = importlib.util.spec_from_loader(_loader.name, _loader)
+keepalive = importlib.util.module_from_spec(_spec)
+_loader.exec_module(keepalive)
+
+TEXT = {
+    "da": {
+        "title": "Forbind nemlig.com",
+        "lead": "Skriv din nemlig.com-adgangskode her. Den går direkte til nemlig.com "
+                "fra Bottens computer — den kommer aldrig i chatten, og Sylvester ser den ikke.",
+        "email": "E-mail",
+        "password": "Adgangskode",
+        "remember": "Husk mig, så Sylvester selv kan logge ind igen",
+        "remember_hint": "Gemmer adgangskoden i en fil kun din Bot kan læse. Uden flueben "
+                         "gemmes kun sessionen, og du logger ind her igen, når nemlig udløber den.",
+        "submit": "Log ind",
+        "working": "Logger ind …",
+        "ok_title": "Forbundet ✅",
+        "ok_body": "nemlig.com er forbundet. Tryk på \u201cI'm done\u201d i Grok Bot og skriv til Sylvester, at du er færdig.",
+        "fail": "Login mislykkedes. Tjek e-mail og adgangskode og prøv igen.",
+        "down": "nemlig.com svarer ikke lige nu. Prøv igen om lidt.",
+        "missing": "Udfyld både e-mail og adgangskode.",
+        "closed_title": "Siden er lukket",
+        "closed_body": "Bed Sylvester om at åbne en ny login-side.",
+    },
+    "en": {
+        "title": "Connect nemlig.com",
+        "lead": "Type your nemlig.com password here. It goes straight to nemlig.com from "
+                "the Bot's computer — it never enters the chat, and Sylvester never sees it.",
+        "email": "E-mail",
+        "password": "Password",
+        "remember": "Remember me, so Sylvester can log in again by himself",
+        "remember_hint": "Stores the password in a file only your Bot can read. Unticked, only "
+                         "the session is kept and you log in here again when nemlig ends it.",
+        "submit": "Log in",
+        "working": "Logging in …",
+        "ok_title": "Connected ✅",
+        "ok_body": "nemlig.com is connected. Choose \u201cI'm done\u201d in Grok Bot and tell Sylvester you're finished.",
+        "fail": "Login failed. Check the e-mail and password and try again.",
+        "down": "nemlig.com isn't answering right now. Try again in a moment.",
+        "missing": "Fill in both e-mail and password.",
+        "closed_title": "This page is closed",
+        "closed_body": "Ask Sylvester to open a new login page.",
+    },
+}
+
+STYLE = """
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: #f7f3ea; color: #1f4e5a; font: 17px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { width: min(440px, 92vw); background: #fffdf8; border: 2px solid #b08d3c; outline: 1px solid #b08d3c;
+  outline-offset: 5px; padding: 30px 26px; margin: 24px 0; }
+.hat { text-align: center; font-size: 34px; }
+h1 { font-family: Georgia, serif; text-align: center; margin: 4px 0 10px; font-size: 26px; }
+p { margin: 0 0 18px; color: #4b5a5e; }
+label { display: block; font-weight: 600; margin: 14px 0 6px; }
+input[type=email], input[type=password] { width: 100%; padding: 12px; font-size: 18px;
+  border: 1px solid #c9bb95; border-radius: 6px; background: #fff; color: #1f4e5a; }
+.check { display: flex; gap: 10px; align-items: flex-start; margin-top: 18px; font-weight: 600; }
+.check input { width: 22px; height: 22px; margin-top: 1px; }
+.hint { font-size: 14px; color: #6b6b5e; margin: 6px 0 0 32px; }
+button { width: 100%; margin-top: 22px; padding: 14px; font-size: 18px; font-weight: 700; color: #fff;
+  background: #1f4e5a; border: 0; border-radius: 6px; }
+button:disabled { opacity: .6; }
+.error { background: #fbe9e4; color: #8a2f1d; border-radius: 6px; padding: 10px 12px; margin-bottom: 14px; }
+"""
+
+
+def page(t: dict, body: str) -> bytes:
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<meta name='referrer' content='no-referrer'>"
+        f"<title>{html.escape(t['title'])}</title><style>{STYLE}</style></head>"
+        f"<body><main><div class='hat'>🎩</div>{body}</main></body></html>"
+    ).encode()
+
+
+def form(t: dict, email: str, error: str = "", remember: bool = False) -> bytes:
+    err = f"<div class='error' role='alert'>{html.escape(error)}</div>" if error else ""
+    checked = " checked" if remember else ""
+    return page(t, f"""
+<h1>{html.escape(t['title'])}</h1>
+<p>{html.escape(t['lead'])}</p>
+{err}
+<form method='post' autocomplete='on' onsubmit="var b=this.querySelector('button');b.disabled=true;b.textContent={json.dumps(t['working'])};">
+  <label for='email'>{html.escape(t['email'])}</label>
+  <input id='email' name='email' type='email' autocomplete='username' required value='{html.escape(email, quote=True)}'>
+  <label for='password'>{html.escape(t['password'])}</label>
+  <input id='password' name='password' type='password' autocomplete='current-password' required autofocus>
+  <label class='check'><input type='checkbox' name='remember' value='1'{checked}> {html.escape(t['remember'])}</label>
+  <div class='hint'>{html.escape(t['remember_hint'])}</div>
+  <button type='submit'>{html.escape(t['submit'])}</button>
+</form>""")
+
+
+def save_credentials(email: str, password: str) -> None:
+    directory = keepalive.login_dir()
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    path = os.path.join(directory, "credentials")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(f"{email}\n{password}\n")
+    os.chmod(path, 0o600)
+
+
+def forget_credentials() -> None:
+    try:
+        os.remove(os.path.join(keepalive.login_dir(), "credentials"))
+    except FileNotFoundError:
+        pass
+
+
+class LoginServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, address, token: str, t: dict, email: str):
+        super().__init__(address, Handler)
+        self.token, self.t, self.email = token, t, email
+        self.attempts = 0
+        self.done = threading.Event()
+        self.lock = threading.Lock()
+
+
+class Handler(BaseHTTPRequestHandler):
+    server: LoginServer
+
+    def log_message(self, *args):  # never log requests (form bodies hold the password)
+        pass
+
+    def send_page(self, code: int, body: bytes) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; "
+                         "script-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def valid_path(self) -> bool:
+        return secrets.compare_digest(self.path.split("?")[0], f"/{self.server.token}")
+
+    def do_GET(self):
+        if not self.valid_path():
+            self.send_error(404)
+            return
+        t = self.server.t
+        if self.server.done.is_set():
+            self.send_page(410, page(t, f"<h1>{t['closed_title']}</h1><p>{t['closed_body']}</p>"))
+            return
+        self.send_page(200, form(t, self.server.email))
+
+    def do_POST(self):
+        if not self.valid_path():
+            self.send_error(404)
+            return
+        t = self.server.t
+        length = min(int(self.headers.get("Content-Length") or 0), 8192)
+        fields = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
+        email = (fields.get("email") or [""])[0].strip()
+        password = (fields.get("password") or [""])[0]
+        remember = (fields.get("remember") or [""])[0] == "1"
+        if not email or not password:
+            self.send_page(400, form(t, email, t["missing"], remember))
+            return
+        with self.server.lock:  # one login at a time
+            if self.server.done.is_set():
+                self.send_page(410, page(t, f"<h1>{t['closed_title']}</h1><p>{t['closed_body']}</p>"))
+                return
+            self.server.attempts += 1
+            ok = keepalive.login(email, password) and keepalive.status() == 0
+            if ok:
+                if remember:
+                    save_credentials(email, password)
+                else:
+                    forget_credentials()  # an old stored password would contradict "don't remember"
+            password = ""
+            if ok:
+                self.server.done.set()
+                self.send_page(200, page(t, f"<h1>{t['ok_title']}</h1><p>{t['ok_body']}</p>"))
+                return
+            error = t["down"] if keepalive.status() == 3 else t["fail"]
+            if self.server.attempts >= MAX_ATTEMPTS:
+                self.server.done.set()
+                self.send_page(429, page(t, f"<h1>{t['closed_title']}</h1><p>{html.escape(error)} {t['closed_body']}</p>"))
+                return
+        self.send_page(401, form(t, email, error, remember))
+
+
+def free_port(preferred: int) -> int:
+    for port in [preferred] + list(range(preferred + 1, preferred + 50)):
+        with socket.socket() as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    raise SystemExit("nemlig-login: no free local port")
+
+
+def serve(server: LoginServer, minutes: float) -> None:
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    server.done.wait(timeout=minutes * 60)
+    server.done.set()
+    # Give the browser a moment to receive the final page, then stop.
+    threading.Event().wait(2)
+    server.shutdown()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--email", default=os.environ.get("NEMLIG_EMAIL", ""))
+    parser.add_argument("--lang", choices=sorted(TEXT), default="da")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--minutes", type=float, default=15)
+    parser.add_argument("--foreground", action="store_true", help="serve in the foreground")
+    args = parser.parse_args()
+
+    token = secrets.token_urlsafe(18)
+    server = LoginServer(("127.0.0.1", free_port(args.port)), token, TEXT[args.lang], args.email)
+    info = {"url": f"http://127.0.0.1:{server.server_address[1]}/{token}", "expires_in_min": args.minutes}
+
+    if args.foreground:
+        print(json.dumps({**info, "pid": os.getpid()}), flush=True)
+        serve(server, args.minutes)
+        return 0
+
+    pid = os.fork()
+    if pid:
+        server.server_close()  # the child owns the listening socket
+        print(json.dumps({**info, "pid": pid}), flush=True)
+        return 0
+    os.setsid()
+    devnull = os.open(os.devnull, os.O_RDWR)
+    for fd in (0, 1, 2):
+        os.dup2(devnull, fd)
+    serve(server, args.minutes)
+    os._exit(0)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

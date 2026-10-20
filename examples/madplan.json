@@ -1,0 +1,80 @@
+{
+  "title": "Uge 44",
+  "subtitle": "26.–30. oktober · 2 voksne og 2 børn",
+  "days": [
+    {
+      "day": "Mandag",
+      "date": "26/10",
+      "dish": "Kylling i karry med ris",
+      "details": "Æble, porre og mango chutney",
+      "offer": "kyllingebryst −30%",
+      "time": "35 min"
+    },
+    {
+      "day": "Tirsdag",
+      "date": "27/10",
+      "dish": "Frikadeller med kartofler og brun sovs",
+      "details": "Agurkesalat",
+      "offer": "hakket svinekød −25%",
+      "time": "50 min"
+    },
+    {
+      "day": "Onsdag",
+      "date": "28/10",
+      "dish": "Laks med citronsmør",
+      "details": "Ovnkartofler og sukkerærter",
+      "offer": "laksefilet −26%",
+      "time": "40 min"
+    },
+    {
+      "day": "Torsdag",
+      "date": "29/10",
+      "dish": "Stegt flæsk med persillesovs",
+      "details": "Kogte kartofler og rødbeder",
+      "offer": "flæsk i skiver −35%",
+      "time": "45 min"
+    },
+    {
+      "day": "Fredag",
+      "date": "30/10",
+      "dish": "Pizzaaften",
+      "highlight": true,
+      "items": [
+        "Hjemmelavet dej og tomatsauce",
+        "Mozzarella, skinke og champignon",
+        "Rucola på til sidst"
+      ],
+      "time": "1 t"
+    }
+  ],
+  "footer": {
+    "saving": "ca. 210 kr",
+    "total": "ca. 1.240 kr",
+    "staples": [
+      {
+        "amount": "10",
+        "name": "æg"
+      },
+      {
+        "amount": "2 l",
+        "name": "mælk"
+      },
+      {
+        "amount": "1",
+        "name": "rugbrød"
+      },
+      {
+        "amount": "250 g",
+        "name": "smør"
+      },
+      {
+        "amount": "1 kg",
+        "name": "havregryn"
+      },
+      {
+        "amount": "1 bdt.",
+        "name": "bananer"
+      }
+    ]
+  }
+}

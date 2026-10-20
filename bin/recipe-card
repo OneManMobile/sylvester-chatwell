@@ -1,0 +1,1192 @@
+#!/bin/sh
+''':'
+# Shell part: run under the repo's .venv Python (works without a system python3).
+py="$(dirname "$0")/../.venv/bin/python"
+[ -x "$py" ] || py=python3
+exec "$py" "$0" "$@"
+'''
+HELP = """Render phone cards (PNG) for Sylvester Chatwell.
+
+Usage: recipe-card <spec.json> [--out <file.png>]
+       recipe-card --which-chrome     print the Chrome binary that will be used
+       recipe-card --help
+
+Without --out the PNG is written next to the spec with the spec's name
+(dinner.json -> dinner.png). Prints the absolute PNG path.
+
+Card kinds (chosen by "kind"; without it a spec with "days" is a meal plan,
+otherwise a recipe):
+
+  recipe  title, ingredient list (+ tools), then a Cooking For Engineers grid
+  plan    weekly meal plan: one block per day, offers, saving, staples, total
+  week    week overview (calendar events + dinner per day), dark theme
+  steps   portrait share card (1080 x 1920 px): numbered steps + bonus step
+
+Every spec may set:
+  "lang":   "da" (default) or "en" - the language of every fixed text on the
+            card (headings, chips, footer words, weekday/month abbreviations)
+            and of the hyphenation used in narrow columns.
+  "labels": {key: text} overriding any built-in label of that language; the
+            list keys (weekdays, weekday_abbr, months) take lists of 7/7/12.
+            Keys and their defaults are listed at the end of --help.
+
+Recipe spec:
+{
+  "title": "Meatballs in cream sauce",
+  "subtitle": "4 servings · 45 min",                   optional
+  "start": ["Preheat oven: 200 °C fan"],               optional: before any step
+  "tools": ["Frying pan", "Pot"],                      optional: equipment
+  "recipe": {                                          the final step
+    "do": "Turn the meatballs in the sauce",
+    "with": [                                          what this step combines
+      {"do": "Mix, shape 30 balls",
+       "with": [{"amount": "1 kg", "name": "minced pork"},
+                {"amount": "2", "name": "eggs"}]},
+      {"amount": "5 dl", "name": "whipping cream"}
+    ]
+  },
+  "notes": ["Can be made the day before."]             optional
+}
+An ingredient is {"amount": ..., "name": ...} (amount shown bold) or a plain
+string. "\\n" in a step text forces a line break. Each step spans exactly the
+rows it combines; time runs left to right. Limits: title 48, subtitle 40,
+ingredient name 28, amount 8, tool 26, start line 40 chars; max 18
+ingredients, 8 tools, 3 start lines, 5 steps in a row.
+
+Meal-plan spec ("kind": "plan" optional):
+{
+  "title": "Week 42",
+  "subtitle": "12-16 October · delivery Monday 07-09",  optional
+  "days": [                                             1-7 days
+    {"day": "Monday", "date": "12/10", "dish": "Salmon with lemon butter",
+     "details": "Fried courgette", "offer": "salmon -26%", "time": "30 min"},
+    {"day": "Friday", "dish": "Taco Friday", "highlight": true,
+     "items": ["Spiced beef", "Guacamole and cheddar"]}
+  ],
+  "footer": {"saving": "approx. 370 kr", "total": "approx. 1,950 kr",   optional
+             "staples": [{"amount": "30", "name": "eggs"}, "coffee"],
+             "note": "..."}
+}
+Day keys: day (required), dish (required), date, details, offer, time,
+items, highlight. Limits: title 40, subtitle 60, day 10, date 8, dish 60,
+details 90, offer 34, time 12, item 44, staple 24, staple amount 10, saving
+20, total 20, note 70 chars; max 4 items per day, 10 staples.
+
+Week spec ("kind": "week"):
+{
+  "kind": "week", "title": "Week 43", "subtitle": "19-25 October",
+  "note": "Clocks go back on Sunday",                   optional
+  "days": [{"day": "Monday", "date": "19/10",
+            "events": [{"time": "17:30", "title": "Running club", "who": "Sam"}],
+            "dinner": "Salmon with lemon butter"}]
+}
+"date" is day/month; the month is shown abbreviated. Events: title
+(required), time (missing = all-day label), who. Limits: title 30, subtitle
+40, day 10, date 6, time 11, event 42, who 12, dinner 44, note 70 chars; max
+6 events per day.
+
+Steps spec ("kind": "steps"):
+{
+  "kind": "steps", "title": "Sylvester Chatwell",
+  "subtitle": "Your household butler in Grok Bot",     optional
+  "kicker": "Get started",                             optional (default: label steps_kicker)
+  "steps": [{"title": "Get Grok Premium", "detail": "Includes Grok Bot"}],  1-7 steps
+  "bonus": {"title": "Ask for a recipe card", "detail": "..."},             optional
+  "footer": "github.com/you/repo"                      optional
+}
+Limits: title 32, subtitle 50, kicker 30, step title 40, detail 110,
+footer 60 chars.
+
+Fonts come from the repo's fonts/ folder (embedded into the page), so cards
+look the same on every machine. Chrome: $RECIPE_CARD_CHROME, else
+<repo>/.deps/chrome/chrome, else google-chrome, google-chrome-stable,
+chromium, chromium-browser on PATH, else Google Chrome.app on macOS.
+
+The laid-out card is measured in Chrome; if a cell spills over its edge or a
+step goes one-word-per-line, the card gets denser (smaller fonts, tighter
+rows) until it fits.
+
+Exit 0 = ok, 64 = invalid spec or limit exceeded, 65 = still doesn't fit (the
+message names the texts to shorten), 1 = rendering failed (no Chrome, font
+missing, Chrome error).
+"""
+import base64
+import html
+import json
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
+_VENV = REPO / ".venv"
+# Run under the repo's own virtualenv (Pillow, pyphen) when it exists.
+if (_VENV / "bin" / "python").exists() and pathlib.Path(sys.prefix).resolve() != _VENV.resolve():
+    try:
+        os.execv(str(_VENV / "bin" / "python"),
+                 [str(_VENV / "bin" / "python"), str(pathlib.Path(__file__).resolve()), *sys.argv[1:]])
+    except OSError:
+        pass  # broken venv: fall back to the current interpreter
+
+try:
+    import pyphen
+except ImportError:
+    pyphen = None
+try:
+    from PIL import Image, ImageChops
+except ImportError:
+    Image = ImageChops = None
+
+FONTS = REPO / "fonts"
+WIDTH_CSS = 440
+SCALE = 3
+PAPER = (250, 246, 236)
+
+
+class SpecError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------- languages
+# Every fixed text a card shows lives here. "labels" can be overridden per
+# spec; "hyphenation" is the pyphen dictionary; "hyphen_prefixes" are word
+# starts the hyphenation patterns split badly, broken off first.
+
+LANGS = {
+    "da": {
+        "labels": {
+            "recipe_kicker": "Opskrift",
+            "ingredients": "Ingredienser",
+            "tools": "Redskaber",
+            "method": "Fremgangsmåde",
+            "plan_kicker": "Madplan",
+            "offer": "Tilbud",
+            "saving": "Besparelse",
+            "total": "i alt",
+            "staples": "Basisvarer",
+            "week_kicker": "Familiens uge",
+            "all_day": "Heldag",
+            "nothing_planned": "Intet planlagt",
+            "steps_kicker": "Kom i gang",
+            "bonus": "Bonus",
+            "weekdays": ["Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag", "Søndag"],
+            "weekday_abbr": ["MAN", "TIR", "ONS", "TOR", "FRE", "LØR", "SØN"],
+            "months": ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"],
+        },
+        "hyphenation": "da_DK",
+        "hyphen_prefixes": ("gennem", "halv", "fint"),
+    },
+    "en": {
+        "labels": {
+            "recipe_kicker": "Recipe",
+            "ingredients": "Ingredients",
+            "tools": "Equipment",
+            "method": "Method",
+            "plan_kicker": "Meal plan",
+            "offer": "Offer",
+            "saving": "Saving",
+            "total": "total",
+            "staples": "Staples",
+            "week_kicker": "The week",
+            "all_day": "All day",
+            "nothing_planned": "Nothing planned",
+            "steps_kicker": "Get started",
+            "bonus": "Bonus",
+            "weekdays": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+            "weekday_abbr": ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"],
+            "months": ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"],
+        },
+        "hyphenation": "en_US",
+        "hyphen_prefixes": (),
+    },
+}
+LIST_LABELS = {"weekdays": 7, "weekday_abbr": 7, "months": 12}
+
+
+class Lang:
+    """Labels and hyphenation for one card."""
+
+    def __init__(self, code="da", overrides=None):
+        pack = LANGS[code]
+        self.labels = {**pack["labels"], **(overrides or {})}
+        self.prefixes = pack["hyphen_prefixes"]
+        self.hyphen = None
+        if pyphen is not None:
+            try:
+                self.hyphen = pyphen.Pyphen(lang=pack["hyphenation"], left=3, right=4)
+            except KeyError:
+                pass
+
+    def __getitem__(self, key):
+        return self.labels[key]
+
+    def weekday(self, name):
+        """(abbreviation, index 0-6 or None) for a weekday name or abbreviation."""
+        key = name.strip().rstrip(".").lower()
+        for index, (full, abbr) in enumerate(zip(self["weekdays"], self["weekday_abbr"])):
+            if key in (full.lower(), abbr.lower()):
+                return abbr, index
+        return name.strip()[:3].upper(), None
+
+    def month(self, number):
+        try:
+            index = int(number)
+        except ValueError:
+            return number
+        return self["months"][index - 1] if 1 <= index <= 12 else number
+
+    def lines(self, text, hyphenate=False):
+        """Escape text; `\\n` becomes a line break. With hyphenate, long words
+        get soft hyphens so narrow columns break at syllables, not mid-letter."""
+        def word(token):
+            if self.hyphen is None or len(token) < 9 or not token.isalpha():
+                return html.escape(token)
+            for prefix in self.prefixes:
+                if token.lower().startswith(prefix) and len(token) - len(prefix) >= 4:
+                    stem = token[len(prefix):]
+                    parts = [token[:len(prefix)], *self.hyphen.inserted(stem).split("-")]
+                    return "&shy;".join(html.escape(part) for part in parts)
+            return "&shy;".join(html.escape(part) for part in self.hyphen.inserted(token).split("-"))
+
+        def line(raw):
+            if not hyphenate:
+                return html.escape(raw)
+            return "".join(word(token) for token in re.split(r"(\W+)", raw))
+
+        return "<br>".join(line(raw) for raw in text.strip().split("\n"))
+
+
+def check_lang(spec):
+    """Validate "lang" and "labels"; return a Lang. Raises SpecError."""
+    code = spec.get("lang", "da")
+    if code not in LANGS:
+        raise SpecError(f'"lang" must be one of {", ".join(LANGS)}')
+    overrides = spec.get("labels", {})
+    if not isinstance(overrides, dict):
+        raise SpecError('"labels" must be an object of label: text')
+    known = LANGS[code]["labels"]
+    for key, value in overrides.items():
+        if key not in known:
+            raise SpecError(f'unknown label "{key}" (allowed: {", ".join(known)})')
+        if key in LIST_LABELS:
+            if (not isinstance(value, list) or len(value) != LIST_LABELS[key]
+                    or not all(isinstance(v, str) and v.strip() for v in value)):
+                raise SpecError(f'label "{key}" must be a list of {LIST_LABELS[key]} non-empty strings')
+        elif not isinstance(value, str) or not value.strip():
+            raise SpecError(f'label "{key}" must be a non-empty string')
+    return Lang(code, overrides)
+
+
+# ---------------------------------------------------------------- shared look
+
+FONT_FILES = {
+    "Playfair Display": ("playfair-display/PlayfairDisplay[wght].ttf", "400 900"),
+    "Josefin Sans": ("josefin-sans/JosefinSans[wght].ttf", "100 700"),
+    "Space Grotesk": ("space-grotesk/SpaceGrotesk[wght].ttf", "300 700"),
+}
+_FONT_CACHE = {}
+
+
+def font_css(*families):
+    """@font-face rules with the repo's fonts embedded as data URLs, so no
+    system font or file-access rule changes how a card looks."""
+    rules = []
+    for family in families:
+        path, weights = FONT_FILES[family]
+        if family not in _FONT_CACHE:
+            file = FONTS / path
+            try:
+                _FONT_CACHE[family] = base64.b64encode(file.read_bytes()).decode("ascii")
+            except OSError as error:
+                raise RuntimeError(f"font missing: {file} ({error.strerror})") from error
+        rules.append(f'@font-face {{ font-family: "{family}"; font-style: normal; font-weight: {weights}; '
+                     f'src: url(data:font/ttf;base64,{_FONT_CACHE[family]}) format("truetype"); }}')
+    return "\n".join(rules)
+
+
+# A gold diamond on a paper-coloured patch: sits on the double frame line.
+DIAMOND_SVG = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E"
+               "%3Cpath d='M5 0L10 5L5 10L0 5Z' fill='%23b08d3c'/%3E%3C/svg%3E")
+FRAME_CSS = f"""
+.frame {{ border: 1.5px solid var(--gold); outline: 1px solid var(--gold); outline-offset: 4px;
+  margin: 5px; position: relative; }}
+.frame::before, .frame::after {{ content: ""; position: absolute; left: 50%; transform: translateX(-50%);
+  width: 27px; height: 14px; background: var(--paper) url("{DIAMOND_SVG}") center / 9px 9px no-repeat; }}
+.frame::before {{ top: -8px; }}
+.frame::after {{ bottom: -8px; }}
+"""
+
+# Fork and knife (Lucide "utensils", ISC licence), drawn in currentColor.
+UTENSILS = ('<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" '
+            'stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/>'
+            '<path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/></svg>')
+TOP_HAT = ('<svg viewBox="0 0 64 40" width="54" height="34" aria-hidden="true">'
+           '<path d="M17 3.5Q32 1 47 3.5L44.5 31h-25Z" fill="#1f4e5a"/>'
+           '<path d="M19.2 23.5h25.6l-.6 6H19.8Z" fill="#b08d3c"/>'
+           '<path d="M3 33.5Q32 26 61 33.5Q32 41 3 33.5Z" fill="#1f4e5a"/></svg>')
+STAR = ('<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="#b08d3c" '
+        'd="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3 6.1 20.6l1.3-6.6L2.5 9.4l6.6-.8Z"/></svg>')
+
+
+# ---------------------------------------------------------------- recipe
+
+def is_ingredient(node):
+    return isinstance(node, str) or (isinstance(node, dict) and "do" not in node)
+
+
+def check(node, path="recipe"):
+    if isinstance(node, str):
+        if not node.strip():
+            raise SpecError(f"{path}: empty ingredient")
+        return
+    if isinstance(node, dict) and "do" not in node:
+        if set(node) - {"amount", "name"} or not isinstance(node.get("name"), str) or not node["name"].strip():
+            raise SpecError(f'{path}: ingredient must be {{"amount": ..., "name": ...}} with a non-empty name')
+        if "amount" in node and not isinstance(node["amount"], str):
+            raise SpecError(f'{path}: "amount" must be a string')
+        return
+    if not isinstance(node, dict) or set(node) - {"do", "with"}:
+        raise SpecError(f'{path}: must be an ingredient or {{"do": ..., "with": [...]}}')
+    if not isinstance(node.get("do"), str) or not node["do"].strip():
+        raise SpecError(f'{path}: "do" must be a non-empty string')
+    children = node.get("with")
+    if not isinstance(children, list) or not children:
+        raise SpecError(f'{path}: "with" must be a non-empty list')
+    for index, child in enumerate(children):
+        check(child, f"{path}.with[{index}]")
+
+
+def depth(node):
+    if is_ingredient(node):
+        return 0
+    return 1 + max(depth(child) for child in node["with"])
+
+
+def layout(root):
+    """Return (rows, ingredients): rows[i] lists the grid cells starting on row i."""
+    cells = []
+    ingredients = []
+
+    def place(node, parent_col):
+        if is_ingredient(node):
+            if isinstance(node, str):
+                amount, name = "", node
+            else:
+                amount, name = node.get("amount", ""), node["name"]
+            cells.append({"row": len(ingredients), "rowspan": 1, "col": 0,
+                          "colspan": parent_col, "text": name, "amount": amount, "kind": "ingredient"})
+            ingredients.append((amount, name))
+            return 1
+        col = depth(node)
+        first = len(ingredients)
+        span = sum(place(child, col) for child in node["with"])
+        cells.append({"row": first, "rowspan": span, "col": col,
+                      "colspan": parent_col - col, "text": node["do"], "kind": "step"})
+        return span
+
+    place(root, depth(root) + 1)
+    rows = [[] for _ in ingredients]
+    for cell in cells:
+        rows[cell["row"]].append(cell)
+    for row in rows:
+        row.sort(key=lambda cell: cell["col"])
+    return rows, ingredients
+
+
+def cell_html(cell, lang):
+    attrs = [f'class="{cell["kind"]}"']
+    if cell["rowspan"] > 1:
+        attrs.append(f'rowspan="{cell["rowspan"]}"')
+    if cell["colspan"] > 1:
+        attrs.append(f'colspan="{cell["colspan"]}"')
+    amount = f'<b class="q">{html.escape(cell["amount"])}</b> ' if cell.get("amount") else ""
+    return f"<td {' '.join(attrs)}>{amount}{lang.lines(cell['text'], hyphenate=True)}</td>"
+
+
+def page(spec, lang, level=0, first=None, with_check=False):
+    """Recipe card HTML at a density level (0 = airy … len(LEVELS)-1 = compact)
+    and ingredient-column width `first` (% of the grid; default the widest)."""
+    density = LEVELS[level]
+    rows, ingredients = layout(spec["recipe"])
+    columns = depth(spec["recipe"]) + 1
+    start = "".join(
+        f'<tr><td class="start" colspan="{columns}">{lang.lines(text)}</td></tr>' for text in spec.get("start", [])
+    )
+    grid = start + "\n".join("<tr>" + "".join(cell_html(cell, lang) for cell in row) + "</tr>" for row in rows)
+    # Fixed widths: auto layout lets long ingredient names squeeze the step
+    # columns until every word wraps. The ingredient column (amount + name)
+    # gets `first`%; step columns share the rest in proportion to the longest
+    # line of text that sits in them, so a short step gets a narrow column
+    # and a long one a wide one.
+    steps = columns - 1
+    if first is None:
+        first = first_widths(steps)[0]
+    weights = [8] * steps
+    for row in rows:
+        for cell in row:
+            if cell["kind"] == "step" and cell["colspan"] == 1:
+                longest = max(len(line) for line in cell["text"].split("\n"))
+                weights[cell["col"] - 1] = max(weights[cell["col"] - 1], min(longest, 22))
+    colgroup = f'<colgroup><col style="width:{first}%">' + "".join(
+        f'<col style="width:{(100 - first) * weight / sum(weights):.2f}%">' for weight in weights
+    ) + "</colgroup>"
+    grid_font = max(default_grid_font(steps) - density["grid_drop"], 10)
+    list_font = density["list"]
+    row_pad = density["row_pad"]
+    cell_pad = density["cell_pad"]
+    items = "\n".join(
+        f'<li><span class="amt">{html.escape(amount)}</span><span class="name">{html.escape(name)}</span></li>'
+        for amount, name in ingredients
+    )
+    subtitle = f'<p class="sub">{html.escape(spec["subtitle"])}</p>' if spec.get("subtitle") else ""
+    ingredient_block = (f'<div><div class="rule">{html.escape(lang["ingredients"])}</div>'
+                        f'<ul class="ing">{items}</ul></div>')
+    if spec.get("tools"):
+        tools = "".join(f"<li>{html.escape(tool)}</li>" for tool in spec["tools"])
+        top = (f'<div class="top">{ingredient_block}'
+               f'<div><div class="rule">{html.escape(lang["tools"])}</div><ul class="tools">{tools}</ul></div></div>')
+    else:
+        top = ingredient_block
+    notes = ""
+    if spec.get("notes"):
+        notes = '<ul class="notes">' + "".join(f"<li>{html.escape(n)}</li>" for n in spec["notes"]) + "</ul>"
+    return f"""<!doctype html><html><head><meta charset="utf-8"><style>
+{font_css("Playfair Display", "Josefin Sans")}
+:root {{ --paper: rgb{PAPER}; --ink: #1f3d44; --teal: #1f4e5a; --gold: #b08d3c; --sage: #e2e9dc; }}
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; background: var(--paper); color: var(--ink);
+  font-family: "Josefin Sans", "DejaVu Sans", sans-serif; }}
+.card {{ width: {WIDTH_CSS}px; padding: 14px 12px; }}
+{FRAME_CSS}
+.frame {{ padding: 22px 13px 16px; }}
+.kicker {{ text-align: center; font-size: 10px; letter-spacing: 4px; color: var(--gold); text-transform: uppercase; }}
+h1 {{ font-family: "Playfair Display", serif; font-weight: 700; font-size: 28px; line-height: 1.15;
+  text-align: center; color: var(--teal); margin: 8px 0 4px; text-wrap: balance; }}
+.sub {{ text-align: center; margin: 0; font-size: 14px; color: #6b6b5e; letter-spacing: .5px; }}
+.rule {{ display: flex; align-items: center; gap: 10px; margin: 16px 0 12px; color: var(--gold);
+  font-size: 11px; letter-spacing: 4px; text-transform: uppercase; }}
+.rule::before, .rule::after {{ content: ""; flex: 1; border-top: 1px solid var(--gold); }}
+ul.ing {{ list-style: none; margin: 0; padding: 0; font-size: {list_font + 1}px; }}
+ul.ing li {{ display: flex; gap: 10px; padding: {row_pad}px 2px; border-bottom: 1px dotted #cdbf98; }}
+ul.ing li:last-child {{ border-bottom: 0; }}
+.amt {{ flex: 0 0 82px; text-align: right; font-weight: 700; color: var(--teal); }}
+.name {{ flex: 1; }}
+.top {{ display: grid; grid-template-columns: 1.55fr 1fr; gap: 16px; }}
+.top .amt {{ flex-basis: 58px; }}
+.top ul.ing {{ font-size: {list_font}px; }}
+ul.tools {{ list-style: none; margin: 0; padding: 0; font-size: {list_font}px; }}
+ul.tools li {{ padding: {row_pad}px 2px {row_pad}px 14px; border-bottom: 1px dotted #cdbf98; position: relative; }}
+ul.tools li:last-child {{ border-bottom: 0; }}
+ul.tools li::before {{ content: ""; position: absolute; left: 1px; top: calc({row_pad}px + .42em); width: 5px; height: 5px;
+  background: var(--gold); transform: rotate(45deg); }}
+.grid {{ border: 1.5px solid var(--teal); border-radius: 6px; overflow: hidden; }}
+table {{ border-collapse: collapse; width: 100%; table-layout: fixed; font-size: {grid_font}px; line-height: 1.25; }}
+td {{ border: 1px solid var(--teal); padding: {cell_pad}px 4px; vertical-align: middle; hyphens: manual; overflow-wrap: break-word; }}
+tr:first-child td {{ border-top: 0; }} tr:last-child td {{ border-bottom: 0; }}
+td:first-child {{ border-left: 0; }} td:last-child {{ border-right: 0; }}
+td.ingredient {{ background: #fffdf7; }}
+td.ingredient b.q {{ font-weight: 700; color: var(--teal); white-space: nowrap; }}
+td.step {{ background: var(--sage); text-align: center; color: var(--teal); font-weight: 600; }}
+td.start {{ background: #f3e6c4; color: #6b4f12; font-weight: 700; text-align: center; letter-spacing: .3px; }}
+.notes {{ margin: 12px 0 0; padding-left: 16px; font-size: 13px; color: #555; }}
+</style></head><body><div class="card"><div class="frame">
+<div class="kicker">{html.escape(lang["recipe_kicker"])}</div>
+<h1>{html.escape(spec["title"])}</h1>{subtitle}
+{top}
+<div class="rule">{html.escape(lang["method"])}</div>
+<div class="grid"><table>{colgroup}{grid}</table></div>{notes}
+</div></div>{MEASURE_SCRIPT if with_check else ""}</body></html>"""
+
+
+def default_grid_font(steps):
+    return 13 if steps <= 3 else 12 if steps == 4 else 11
+
+
+def first_widths(steps):
+    """Ingredient-column widths (% of grid) to try, widest first. Wide keeps
+    "amount + name" on one line; narrow gives many step columns room."""
+    return (30, 24, 20) if steps >= 4 else (34, 28, 24)
+
+
+# Density levels, airy → compact. Everything shrinks together so a long
+# ingredient list or a dense grid still fits a phone-shaped card.
+LEVELS = [
+    {"list": 14.5, "row_pad": 5, "grid_drop": 0, "cell_pad": 6},
+    {"list": 13.5, "row_pad": 4, "grid_drop": 1, "cell_pad": 5},
+    {"list": 12.5, "row_pad": 3, "grid_drop": 2, "cell_pad": 4},
+    {"list": 12, "row_pad": 2, "grid_drop": 3, "cell_pad": 3},
+]
+# Height ÷ width the card should stay under; chat apps shrink very tall
+# images (often to a longest side of 2048 px), making text small on a phone.
+MAX_RATIO = 2.4
+
+
+# Runs inside headless Chrome once every font has loaded, and records every
+# element whose text spills over its edge, every step cell so narrow that each
+# word got its own line, and fixed-size cards whose content overflows.
+# --dump-dom returns the DOM including the data-* attributes.
+MEASURE_SCRIPT = """<script>
+(function () {
+  function run() {
+    const issues = [];
+    const label = (el) => el.innerText.replace(/\\u00ad/g, "").replace(/\\s+/g, " ").trim();
+    document.querySelectorAll("td, .amt, .name, ul.tools li, h1, .rule, .dish, .details, .chips, .badge, .staples, .chk, .date, .st, .sd, .foot, .sub").forEach((el) => {
+      if (el.scrollWidth > el.clientWidth + 1) issues.push({ text: label(el), problem: "spills over its edge" });
+    });
+    document.querySelectorAll("td.step").forEach((td) => {
+      const range = document.createRange();
+      range.selectNodeContents(td);
+      const lines = new Set([...range.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top))).size;
+      const words = label(td).split(" ").filter(Boolean).length;
+      // Cramped = nearly every word on its own line. Short texts of two or
+      // three words over two or three lines are fine.
+      const cramped = (words === 4 && lines === 4) || (words >= 5 && lines >= Math.ceil(words * 0.85));
+      if (cramped) {
+        issues.push({ text: label(td), problem: "mostly one word per line (too cramped)" });
+      } else if (lines > 8) {
+        issues.push({ text: label(td), problem: `${lines} lines in one step (max 8)` });
+      }
+    });
+    document.querySelectorAll(".fixed").forEach((el) => {
+      // Children, not scrollHeight: the frame's diamonds stick out on purpose.
+      const limit = el.getBoundingClientRect().bottom - parseFloat(getComputedStyle(el).paddingBottom) + 1;
+      const bottom = Math.max(...[...el.children].map((child) => child.getBoundingClientRect().bottom));
+      if (bottom > limit) issues.push({ text: label(el).slice(0, 60), problem: "card content is too tall" });
+    });
+    const failed = [...document.fonts].filter((f) => f.status !== "loaded").map((f) => f.family);
+    const card = document.querySelector(".card").getBoundingClientRect();
+    document.body.setAttribute("data-issues", JSON.stringify(issues));
+    document.body.setAttribute("data-fonts", JSON.stringify(failed));
+    document.body.setAttribute("data-ratio", (card.height / card.width).toFixed(2));
+  }
+  Promise.all([...document.fonts].map((f) => f.load().catch(() => null)))
+    .then(() => document.fonts.ready).then(run);
+})();
+</script>"""
+
+
+def find_chrome():
+    """Path of the Chrome/Chromium binary to use, or None."""
+    env = os.environ.get("RECIPE_CARD_CHROME")
+    if env:
+        return env if os.access(env, os.X_OK) else shutil.which(env)
+    local = REPO / ".deps" / "chrome" / "chrome"
+    if os.access(local, os.X_OK):
+        return str(local)
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        found = shutil.which(name)
+        if found:
+            return found
+    mac = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    if os.access(mac, os.X_OK):
+        return mac
+    return None
+
+
+def chrome(page_path, *extra, width=WIDTH_CSS, height=3000):
+    binary = find_chrome()
+    if binary is None:
+        raise RuntimeError("no Chrome found: set RECIPE_CARD_CHROME or run install.sh")
+    with tempfile.TemporaryDirectory() as profile:
+        args = [binary, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
+                "--no-default-browser-check", "--disable-dev-shm-usage", f"--user-data-dir={profile}",
+                f"--force-device-scale-factor={SCALE}", f"--window-size={width},{height}",
+                "--virtual-time-budget=10000"]
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            args.append("--no-sandbox")
+        return subprocess.run([*args, *extra, pathlib.Path(page_path).as_uri()],
+                              check=True, capture_output=True, text=True, timeout=90)
+
+
+# Chrome now and then fails a web-font load (seen on Linux machines with
+# hardly any system fonts); a fresh Chrome run nearly always succeeds.
+FONT_ATTEMPTS = 3
+# Appended to the page that gets screenshotted: if a font failed, remove the
+# card so the screenshot comes out blank and render() tries again.
+FONT_GUARD = """<script>
+Promise.all([...document.fonts].map((f) => f.load().catch(() => null))).then(() => {
+  if ([...document.fonts].some((f) => f.status !== "loaded")) document.querySelector(".card").remove();
+});
+</script>"""
+
+
+def measure(markup, size):
+    """Return (issues, height/width ratio) for the laid-out card."""
+    with tempfile.TemporaryDirectory() as tmp:
+        page_path = os.path.join(tmp, "card.html")
+        with open(page_path, "w", encoding="utf-8") as handle:
+            handle.write(markup)
+        for _ in range(FONT_ATTEMPTS):
+            dom = chrome(page_path, "--dump-dom", width=size[0], height=size[1]).stdout
+            issues = re.search(r'data-issues="([^"]*)"', dom)
+            fonts = re.search(r'data-fonts="([^"]*)"', dom)
+            ratio = re.search(r'data-ratio="([^"]*)"', dom)
+            if not issues or not ratio or not fonts:
+                raise RuntimeError("layout check did not run")
+            failed = json.loads(html.unescape(fonts.group(1)))
+            if not failed:
+                return json.loads(html.unescape(issues.group(1))), float(ratio.group(1))
+    raise RuntimeError(f"fonts failed to load in Chrome: {', '.join(sorted(set(failed)))}")
+
+
+LIMITS = {"title": 48, "subtitle": 40, "amount": 8, "name": 28, "tool": 26, "start": 40}
+
+
+def lint(spec):
+    """Hard limits that keep the phone layout readable. Raises SpecError."""
+    problems = []
+    for key in ("title", "subtitle"):
+        if len(spec.get(key, "")) > LIMITS[key]:
+            problems.append(f'{key} is {len(spec[key])} chars (max {LIMITS[key]})')
+    _, ingredients = layout(spec["recipe"])
+    if len(ingredients) > 18:
+        problems.append(f"{len(ingredients)} ingredients (max 18) — merge seasonings like 'salt and pepper'")
+    for index, (amount, name) in enumerate(ingredients, 1):
+        if len(amount) > LIMITS["amount"]:
+            problems.append(f"ingredient {index} amount '{amount}' is {len(amount)} chars (max {LIMITS['amount']})")
+        if len(name) > LIMITS["name"]:
+            problems.append(f"ingredient {index} '{name}' is {len(name)} chars (max {LIMITS['name']})")
+    tools = spec.get("tools", [])
+    if len(tools) > 8:
+        problems.append(f"{len(tools)} tools (max 8)")
+    problems += [f"tool '{t}' is {len(t)} chars (max {LIMITS['tool']})" for t in tools if len(t) > LIMITS["tool"]]
+    start = spec.get("start", [])
+    if len(start) > 3:
+        problems.append(f"{len(start)} start lines (max 3)")
+    problems += [f"start line '{s}' is {len(s)} chars (max {LIMITS['start']})" for s in start if len(s) > LIMITS["start"]]
+    if depth(spec["recipe"]) > 5:
+        problems.append(f"{depth(spec['recipe'])} steps in a row (max 5) — combine small steps")
+    if problems:
+        raise SpecError("; ".join(problems))
+
+
+def text_checker(limits):
+    """A validator for one string field against `limits`. Raises SpecError."""
+    def text(value, key, where, required=False):
+        if value is None and not required:
+            return
+        if not isinstance(value, str) or not value.strip():
+            raise SpecError(f'{where}: "{key}" must be a non-empty string')
+        if len(value) > limits[key]:
+            raise SpecError(f"{where}: {key} '{value}' is {len(value)} chars (max {limits[key]})")
+    return text
+
+
+# ---------------------------------------------------------------- meal plan
+
+PLAN_LIMITS = {"title": 40, "subtitle": 60, "day": 10, "date": 8, "dish": 60, "details": 90,
+               "offer": 34, "time": 12, "item": 44, "staple": 24, "amount": 10, "saving": 20, "total": 20,
+               "note": 70}
+# Density levels for the plan card, airy → compact.
+PLAN_LEVELS = [
+    {"dish": 19, "details": 13.5, "pad": 13},
+    {"dish": 18, "details": 13, "pad": 11},
+    {"dish": 17, "details": 12.5, "pad": 9},
+    {"dish": 16, "details": 12, "pad": 7},
+]
+
+
+def check_plan(spec):
+    """Validate a meal-plan spec and its length limits. Raises SpecError."""
+    text = text_checker(PLAN_LIMITS)
+    text(spec.get("title"), "title", "plan", required=True)
+    text(spec.get("subtitle"), "subtitle", "plan")
+    days = spec.get("days")
+    if not isinstance(days, list) or not 1 <= len(days) <= 7:
+        raise SpecError('"days" must be a list of 1-7 days')
+    for index, day in enumerate(days, 1):
+        where = f"day {index}"
+        if not isinstance(day, dict) or set(day) - {"day", "date", "dish", "details", "offer", "time", "items", "highlight"}:
+            raise SpecError(f'{where}: allowed keys are day, date, dish, details, offer, time, items, highlight')
+        text(day.get("day"), "day", where, required=True)
+        text(day.get("dish"), "dish", where, required=True)
+        for key in ("date", "details", "offer", "time"):
+            text(day.get(key), key, where)
+        items = day.get("items", [])
+        if not isinstance(items, list) or len(items) > 4:
+            raise SpecError(f'{where}: "items" must be a list of at most 4 strings')
+        for item in items:
+            text(item, "item", where, required=True)
+    footer = spec.get("footer", {})
+    if not isinstance(footer, dict) or set(footer) - {"saving", "total", "staples", "note"}:
+        raise SpecError('"footer" allows saving, total, staples, note')
+    text(footer.get("saving"), "saving", "footer")
+    text(footer.get("total"), "total", "footer")
+    text(footer.get("note"), "note", "footer")
+    staples = footer.get("staples", [])
+    if not isinstance(staples, list) or len(staples) > 10:
+        raise SpecError('footer "staples" must be a list of at most 10 staples')
+    for staple in staples:
+        if isinstance(staple, dict):
+            if set(staple) - {"amount", "name"}:
+                raise SpecError('footer staple must be {"amount": ..., "name": ...} or a string')
+            text(staple.get("name"), "staple", "footer", required=True)
+            text(staple.get("amount"), "amount", "footer staple", required=True)
+        else:
+            text(staple, "staple", "footer", required=True)
+
+
+def staple_chip(staple):
+    """A staple as a chip: {"amount", "name"} shows the amount in bold first."""
+    if isinstance(staple, dict):
+        return (f'<span class="chip staple"><b>{html.escape(staple["amount"])}</b> '
+                f'{html.escape(staple["name"])}</span>')
+    return f'<span class="chip staple">{html.escape(staple)}</span>'
+
+
+def plan_page(spec, lang, level=0, with_check=False):
+    """Meal-plan card: header, one block per day, savings and staples."""
+    density = PLAN_LEVELS[level]
+    esc = html.escape
+    blocks = []
+    for day in spec["days"]:
+        abbrev = esc(lang.weekday(day["day"])[0])
+        date = f'<span class="date">{esc(day["date"])}</span>' if day.get("date") else ""
+        chips = []
+        if day.get("offer"):
+            chips.append(f'<span class="chip offer">{esc(lang["offer"])} · {esc(day["offer"])}</span>')
+        if day.get("time"):
+            chips.append(f'<span class="chip time">{esc(day["time"])}</span>')
+        chip_row = f'<div class="chips">{"".join(chips)}</div>' if chips else ""
+        details = f'<div class="details">{lang.lines(day["details"], hyphenate=True)}</div>' if day.get("details") else ""
+        items = ""
+        if day.get("items"):
+            items = '<ul class="items">' + "".join(f"<li>{esc(i)}</li>" for i in day["items"]) + "</ul>"
+        css = "day highlight" if day.get("highlight") else "day"
+        blocks.append(
+            f'<div class="{css}"><div class="badge"><span class="wd">{abbrev}</span>{date}</div>'
+            f'<div class="body"><div class="dish">{lang.lines(day["dish"], hyphenate=True)}</div>{details}{items}{chip_row}</div></div>'
+        )
+    footer = spec.get("footer", {})
+    summary = ""
+    if footer:
+        total = (f'<span class="total">{esc(lang["total"])} {esc(footer["total"])}</span>'
+                 if footer.get("total") else "")
+        saving = (f'<div class="saving"><span class="label">{esc(lang["saving"])}</span>'
+                  f'<span class="figures"><span class="amount">{esc(footer["saving"])}</span>{total}</span></div>'
+                  ) if footer.get("saving") else ""
+        if total and not saving:
+            saving = f'<div class="saving"><span></span><span class="figures">{total}</span></div>'
+        staples = ""
+        if footer.get("staples"):
+            staples = (f'<div class="staples"><span class="label">{esc(lang["staples"])}</span><div>'
+                       + "".join(staple_chip(s) for s in footer["staples"]) + "</div></div>")
+        note = f'<div class="note">{esc(footer["note"])}</div>' if footer.get("note") else ""
+        summary = f'<div class="summary">{saving}{staples}{note}</div>'
+    subtitle = f'<p class="sub">{esc(spec["subtitle"])}</p>' if spec.get("subtitle") else ""
+    return f"""<!doctype html><html><head><meta charset="utf-8"><style>
+{font_css("Playfair Display", "Josefin Sans")}
+:root {{ --paper: rgb{PAPER}; --ink: #1f3d44; --teal: #1f4e5a; --gold: #b08d3c; --sage: #e2e9dc; --cream: #f3e6c4; }}
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; background: var(--paper); color: var(--ink); font-family: "Josefin Sans", "DejaVu Sans", sans-serif; }}
+.card {{ width: {WIDTH_CSS}px; padding: 14px 12px; }}
+{FRAME_CSS}
+.frame {{ padding: 24px 14px 16px; }}
+.kicker {{ text-align: center; font-size: 10px; letter-spacing: 4px; color: var(--gold); text-transform: uppercase; }}
+h1 {{ font-family: "Playfair Display", serif; font-weight: 700; font-size: 30px; line-height: 1.1;
+  text-align: center; color: var(--teal); margin: 8px 0 4px; text-wrap: balance; }}
+.sub {{ text-align: center; margin: 0 0 14px; font-size: 14px; color: #6b6b5e; letter-spacing: .5px; }}
+.day {{ display: grid; grid-template-columns: 58px 1fr; gap: 13px; align-items: center;
+  padding: {density["pad"]}px 4px; border-top: 1px dotted #cdbf98; }}
+.days > .day:first-child {{ border-top: 1px solid var(--gold); }}
+.day.highlight {{ background: linear-gradient(90deg, rgba(243,230,196,.55), rgba(243,230,196,0)); }}
+.badge {{ width: 58px; height: 58px; border: 1.5px solid var(--gold); outline: 1px solid var(--gold);
+  outline-offset: 2px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: #fffdf7; }}
+.wd {{ font-size: 13px; letter-spacing: 2.5px; font-weight: 700; color: var(--teal); margin-left: 2.5px; }}
+.date {{ font-family: "Playfair Display", serif; font-size: 13px; color: var(--gold); margin-top: 2px; }}
+.dish {{ font-family: "Playfair Display", serif; font-weight: 700; font-size: {density["dish"]}px;
+  line-height: 1.2; color: var(--teal); hyphens: manual; text-wrap: balance; }}
+.details {{ font-size: {density["details"]}px; color: #5c5c50; margin-top: 3px; line-height: 1.3; hyphens: manual; text-wrap: pretty; }}
+ul.items {{ margin: 4px 0 0; padding-left: 15px; font-size: {density["details"]}px; color: #5c5c50; line-height: 1.35; }}
+.chips {{ margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }}
+.chip {{ font-size: 11.5px; padding: 3px 7px 2px; border-radius: 3px; letter-spacing: .3px; white-space: nowrap; }}
+.chip.offer {{ background: var(--cream); color: #6b4f12; font-weight: 700; }}
+.chip.time {{ background: var(--sage); color: var(--teal); font-weight: 600; }}
+.chip.staple {{ background: #fffdf7; border: 1px solid #cdbf98; color: var(--ink); display: inline-block; margin: 0 5px 5px 0; }}
+.chip.staple b {{ color: var(--teal); font-weight: 700; }}
+.summary {{ margin-top: 14px; border-top: 1px solid var(--gold); padding-top: 12px; }}
+.saving {{ display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }}
+.label {{ font-size: 10.5px; letter-spacing: 3.5px; text-transform: uppercase; color: var(--gold); display: block; margin-bottom: 6px; }}
+.saving .label {{ margin: 0; }}
+.amount {{ font-family: "Playfair Display", serif; font-weight: 700; font-size: 24px; color: var(--teal); }}
+.figures {{ display: flex; flex-direction: column; align-items: flex-end; }}
+.total {{ font-size: 11.5px; color: #6b6b5e; letter-spacing: .4px; margin-top: 1px; }}
+.note {{ font-size: 12.5px; color: #6b6b5e; text-align: center; margin-top: 6px; }}
+</style></head><body><div class="card"><div class="frame">
+<div class="kicker">{esc(lang["plan_kicker"])}</div>
+<h1>{esc(spec["title"])}</h1>{subtitle}
+<div class="days">{"".join(blocks)}</div>
+{summary}
+</div></div>{MEASURE_SCRIPT if with_check else ""}</body></html>"""
+
+
+# ---------------------------------------------------------------- week overview
+
+NIGHT = (18, 20, 28)
+WEEK_LIMITS = {"title": 30, "subtitle": 40, "day": 10, "date": 6, "time": 11, "event": 42,
+               "who": 12, "dinner": 44, "note": 70}
+WEEK_LEVELS = [
+    {"event": 15, "pad": 13, "gap": 8, "num": 26},
+    {"event": 14.5, "pad": 11, "gap": 7, "num": 25},
+    {"event": 14, "pad": 9, "gap": 6, "num": 24},
+    {"event": 13.5, "pad": 7, "gap": 5, "num": 22},
+]
+
+
+def check_week(spec):
+    """Validate a week-overview spec and its length limits. Raises SpecError."""
+    text = text_checker(WEEK_LIMITS)
+    text(spec.get("title"), "title", "week", required=True)
+    text(spec.get("subtitle"), "subtitle", "week")
+    text(spec.get("note"), "note", "week")
+    days = spec.get("days")
+    if not isinstance(days, list) or not 1 <= len(days) <= 7:
+        raise SpecError('"days" must be a list of 1-7 days')
+    for index, day in enumerate(days, 1):
+        where = f"day {index}"
+        if not isinstance(day, dict) or set(day) - {"day", "date", "events", "dinner"}:
+            raise SpecError(f"{where}: allowed keys are day, date, events, dinner")
+        text(day.get("day"), "day", where, required=True)
+        text(day.get("date"), "date", where)
+        text(day.get("dinner"), "dinner", where)
+        events = day.get("events", [])
+        if not isinstance(events, list) or len(events) > 6:
+            raise SpecError(f'{where}: "events" must be a list of at most 6 events')
+        for event in events:
+            if not isinstance(event, dict) or set(event) - {"time", "title", "who"}:
+                raise SpecError(f'{where}: event must be {{"time", "title", "who"}}')
+            text(event.get("title"), "event", where, required=True)
+            text(event.get("time"), "time", where)
+            text(event.get("who"), "who", where)
+
+
+def week_page(spec, lang, level=0, with_check=False):
+    """Week overview: dark and calm, one warm accent reserved for dinner;
+    deliberately unlike the cream/gold meal plan."""
+    density = WEEK_LEVELS[level]
+    esc = html.escape
+    rows = []
+    for day in spec["days"]:
+        number, _, month = (day.get("date") or "").partition("/")
+        abbrev, index = lang.weekday(day["day"])
+        weekend = index is not None and index >= 5
+        events = []
+        for event in day.get("events", []):
+            who = event.get("who")
+            tag = f'<span class="who">{esc(who)}</span>' if who else ""
+            time = esc(event.get("time") or lang["all_day"])
+            events.append(
+                f'<div class="ev chk"><span class="bar"></span><span class="t">{time}</span>'
+                f'<span class="title">{lang.lines(event["title"], hyphenate=True)}{tag}</span></div>'
+            )
+        # Dinner sits in the same bar | time | title grid as the events, so
+        # the dish lines up with the event titles on every card.
+        dinner = (f'<div class="ev dinner chk"><span class="bar"></span><span class="t">{UTENSILS}</span>'
+                  f'<span class="title">{esc(day["dinner"])}</span></div>') if day.get("dinner") else ""
+        if not events and not dinner:
+            events.append(f'<div class="empty">{esc(lang["nothing_planned"])}</div>')
+        rows.append(
+            f'<div class="day{" weekend" if weekend else ""}"><div class="date">'
+            f'<span class="wd">{esc(abbrev)}</span><span class="num">{esc(number or "")}</span>'
+            f'<span class="mo">{esc(lang.month(month) if month else "")}</span></div>'
+            f'<div class="evs">{"".join(events)}{dinner}</div></div>'
+        )
+    subtitle = f'<div class="sub">{esc(spec["subtitle"])}</div>' if spec.get("subtitle") else ""
+    note = f'<div class="note">{esc(spec["note"])}</div>' if spec.get("note") else ""
+    return f"""<!doctype html><html><head><meta charset="utf-8"><style>
+{font_css("Space Grotesk")}
+:root {{ --night: rgb{NIGHT}; --surface: #1a1d27; --weekend: #1f1c24; --line: #2a2e3a;
+  --text: #eef0f5; --soft: #b4b9c7; --muted: #6f7588; --accent: #ff8a6b; }}
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; background: var(--night); color: var(--text); font-family: "Space Grotesk", "DejaVu Sans", sans-serif; }}
+.card {{ width: {WIDTH_CSS}px; padding: 24px 16px 18px; }}
+.head {{ display: flex; align-items: flex-end; justify-content: space-between; padding: 0 4px 14px; }}
+.kicker {{ font-size: 10.5px; letter-spacing: 3px; text-transform: uppercase; color: var(--muted); font-weight: 600; }}
+h1 {{ margin: 4px 0 0; font-size: 38px; line-height: 1; font-weight: 700; letter-spacing: -1.2px; }}
+.sub {{ font-size: 13px; color: var(--soft); font-weight: 500; padding-bottom: 3px; }}
+.note {{ margin: 0 0 10px; padding: 10px 14px; border-radius: 10px; font-size: 14px; font-weight: 600;
+  color: #ffd3c6; background: rgba(255,138,107,.12); border: 1px solid rgba(255,138,107,.28); }}
+.days {{ display: flex; flex-direction: column; gap: {density["gap"]}px; }}
+.day {{ display: grid; grid-template-columns: 46px 1fr; gap: 14px; padding: {density["pad"]}px 14px {density["pad"]}px 10px;
+  background: var(--surface); border-radius: 12px; }}
+.day.weekend {{ background: var(--weekend); }}
+.date {{ display: flex; flex-direction: column; align-items: center; justify-content: center; }}
+.wd {{ font-size: 10.5px; letter-spacing: 2px; font-weight: 600; color: var(--muted); }}
+.num {{ font-size: {density["num"]}px; font-weight: 700; line-height: 1.05; color: var(--text); }}
+.weekend .num {{ color: var(--accent); }}
+.mo {{ font-size: 10px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }}
+.evs {{ display: flex; flex-direction: column; gap: 6px; justify-content: center; min-width: 0; }}
+.ev {{ display: grid; grid-template-columns: 3px 46px 1fr; gap: 9px; align-items: baseline; font-size: {density["event"]}px; }}
+.ev .bar {{ align-self: stretch; border-radius: 2px; background: #8a90a3; }}
+.ev .t {{ color: var(--soft); font-weight: 500; font-variant-numeric: tabular-nums; font-size: .9em; }}
+.ev .title {{ font-weight: 500; hyphens: manual; }}
+.ev .who {{ font-size: .8em; color: var(--soft); font-weight: 500; margin-left: 7px; }}
+.empty {{ color: var(--muted); font-size: 13px; }}
+.ev.dinner {{ align-items: center; }}
+.ev.dinner .bar {{ background: var(--accent); }}
+.ev.dinner .t {{ color: var(--accent); display: flex; }}
+.ev.dinner .title {{ color: #ffd3c6; font-weight: 500; }}
+.ev + .ev.dinner {{ margin-top: 3px; padding-top: 9px; border-top: 1px solid var(--line); }}
+</style></head><body><div class="card">
+<div class="head"><div><div class="kicker">{esc(lang["week_kicker"])}</div><h1>{esc(spec["title"])}</h1></div>{subtitle}</div>
+{note}
+<div class="days">{"".join(rows)}</div>
+</div>{MEASURE_SCRIPT if with_check else ""}</body></html>"""
+
+
+# ---------------------------------------------------------------- steps share card
+
+STEPS_SIZE = (360, 640)  # CSS px; × SCALE = 1080 × 1920 (9:16, a phone screen)
+STEPS_LIMITS = {"title": 32, "subtitle": 50, "kicker": 30, "step": 40, "detail": 110, "footer": 60}
+STEPS_LEVELS = [
+    {"title": 34, "step": 17, "detail": 13.5, "pad": 8, "badge": 34},
+    {"title": 32, "step": 16, "detail": 13, "pad": 6, "badge": 32},
+    {"title": 30, "step": 15, "detail": 12.5, "pad": 5, "badge": 30},
+    {"title": 28, "step": 14.5, "detail": 12, "pad": 4, "badge": 28},
+]
+
+
+def check_steps(spec):
+    """Validate a steps share-card spec and its length limits. Raises SpecError."""
+    text = text_checker(STEPS_LIMITS)
+    text(spec.get("title"), "title", "steps", required=True)
+    text(spec.get("subtitle"), "subtitle", "steps")
+    text(spec.get("kicker"), "kicker", "steps")
+    text(spec.get("footer"), "footer", "steps")
+    steps = spec.get("steps")
+    if not isinstance(steps, list) or not 1 <= len(steps) <= 7:
+        raise SpecError('"steps" must be a list of 1-7 steps')
+    entries = [(f"step {index}", step) for index, step in enumerate(steps, 1)]
+    if "bonus" in spec:
+        entries.append(("bonus", spec["bonus"]))
+    for where, step in entries:
+        if not isinstance(step, dict) or set(step) - {"title", "detail"}:
+            raise SpecError(f'{where}: must be {{"title": ..., "detail": ...}}')
+        text(step.get("title"), "step", where, required=True)
+        text(step.get("detail"), "detail", where)
+
+
+def breakable(text):
+    """Escape text; URL-like words may wrap only after a "/", never at a "-"."""
+    def word(token):
+        if "/" not in token:
+            return html.escape(token)
+        return "/<wbr>".join(f'<span class="nw">{html.escape(part)}</span>' if part else ""
+                             for part in token.split("/"))
+    return "".join(word(token) for token in re.split(r"(\s+)", text))
+
+
+def steps_page(spec, lang, level=0, with_check=False):
+    """Portrait share card: hat, title, numbered steps, optional bonus, footer."""
+    density = STEPS_LEVELS[level]
+    esc = html.escape
+
+    def row(badge, step, css="", tag=""):
+        detail = f'<div class="sd">{breakable(step["detail"])}</div>' if step.get("detail") else ""
+        return (f'<li class="{css}"><div class="num">{badge}</div><div>{tag}'
+                f'<div class="st">{breakable(step["title"])}</div>{detail}</div></li>')
+
+    rows = [row(str(index), step) for index, step in enumerate(spec["steps"], 1)]
+    if spec.get("bonus"):
+        rows.append(row(STAR, spec["bonus"], "bonus", f'<span class="tag">{esc(lang["bonus"])}</span>'))
+    subtitle = f'<p class="sub">{esc(spec["subtitle"])}</p>' if spec.get("subtitle") else ""
+    footer = f'<div class="foot">{breakable(spec["footer"])}</div>' if spec.get("footer") else ""
+    kicker = spec.get("kicker") or lang["steps_kicker"]
+    width, height = STEPS_SIZE
+    return f"""<!doctype html><html><head><meta charset="utf-8"><style>
+{font_css("Playfair Display", "Josefin Sans")}
+:root {{ --paper: rgb{PAPER}; --ink: #1f3d44; --teal: #1f4e5a; --gold: #b08d3c; --sage: #e2e9dc; }}
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; background: var(--paper); color: var(--ink); font-family: "Josefin Sans", "DejaVu Sans", sans-serif; }}
+.card {{ width: {width}px; height: {height}px; padding: 12px 10px; }}
+{FRAME_CSS}
+.frame {{ height: calc(100% - 10px); padding: 20px 14px 14px; display: flex; flex-direction: column; }}
+.hat {{ display: flex; justify-content: center; }}
+.kicker {{ text-align: center; font-size: 10px; letter-spacing: 4px; color: var(--gold); text-transform: uppercase; margin-top: 6px; }}
+h1 {{ font-family: "Playfair Display", serif; font-weight: 700; font-size: {density["title"]}px; line-height: 1.1;
+  text-align: center; color: var(--teal); margin: 6px 0 4px; text-wrap: balance; }}
+.sub {{ text-align: center; margin: 0; font-size: 14px; color: #6b6b5e; letter-spacing: .4px; text-wrap: balance; }}
+ol.steps {{ list-style: none; margin: 14px 0 10px; padding: 0; flex: 1 1 auto; display: flex; flex-direction: column;
+  justify-content: center; }}
+ol.steps li {{ flex: 1 1 auto; max-height: 120px; display: grid; grid-template-columns: {density["badge"]}px 1fr; gap: 13px; align-items: center;
+  padding: {density["pad"]}px 4px; border-top: 1px dotted #cdbf98; }}
+ol.steps li:first-child {{ border-top: 1px solid var(--gold); }}
+ol.steps li.bonus {{ border-top: 1px solid var(--gold); background: linear-gradient(90deg, rgba(243,230,196,.75), rgba(243,230,196,0)); }}
+.num {{ width: {density["badge"]}px; height: {density["badge"]}px; border: 1.5px solid var(--gold); outline: 1px solid var(--gold);
+  outline-offset: 2px; background: #fffdf7; display: flex; align-items: center; justify-content: center;
+  font-family: "Playfair Display", serif; font-weight: 700; font-size: {density["badge"] * .53:.1f}px; color: var(--teal); }}
+.st {{ font-family: "Playfair Display", serif; font-weight: 700; font-size: {density["step"]}px; line-height: 1.2;
+  color: var(--teal); text-wrap: balance; }}
+.sd {{ font-size: {density["detail"]}px; line-height: 1.3; color: #5c5c50; margin-top: 3px; text-wrap: balance; }}
+.nw {{ white-space: nowrap; }}
+.tag {{ display: block; font-size: 9.5px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold); font-weight: 700; margin-bottom: 2px; }}
+.foot {{ border-top: 1px solid var(--gold); padding-top: 10px; text-align: center; font-size: 11.5px; letter-spacing: .5px;
+  color: var(--teal); font-weight: 600; }}
+</style></head><body><div class="card"><div class="frame fixed">
+<div class="hat">{TOP_HAT}</div>
+<div class="kicker">{esc(kicker)}</div>
+<h1>{esc(spec["title"])}</h1>{subtitle}
+<ol class="steps">{"".join(rows)}</ol>
+{footer}
+</div></div>{MEASURE_SCRIPT if with_check else ""}</body></html>"""
+
+
+# ---------------------------------------------------------------- render
+
+def render(markup, out_path, background=PAPER, size=(WIDTH_CSS, 3000), fixed=False):
+    """Screenshot the page and save a PNG cropped to the card (fixed=True: the
+    whole viewport, for fixed-size cards)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        page_path = os.path.join(tmp, "card.html")
+        shot_path = os.path.join(tmp, "shot.png")
+        with open(page_path, "w", encoding="utf-8") as handle:
+            handle.write(markup.replace("</body>", FONT_GUARD + "</body>"))
+        for _ in range(FONT_ATTEMPTS):
+            chrome(page_path, f"--screenshot={shot_path}", width=size[0], height=size[1])
+            image = Image.open(shot_path).convert("RGB")
+            box = ImageChops.difference(image, Image.new("RGB", image.size, background)).getbbox()
+            if box is not None:
+                break
+        else:
+            raise RuntimeError("rendered page is blank (fonts failed to load in Chrome)")
+        if fixed:
+            image = image.crop((0, 0, size[0] * SCALE, size[1] * SCALE))
+        else:
+            pad = 18 * SCALE
+            image = image.crop((0, max(box[1] - pad, 0), image.width, min(box[3] + pad, image.height)))
+        image.save(out_path, optimize=True)
+
+
+def help_text():
+    lines = [HELP.rstrip(), "", "Labels (key: da / en):"]
+    for key in LANGS["da"]["labels"]:
+        da, en = LANGS["da"]["labels"][key], LANGS["en"]["labels"][key]
+        if isinstance(da, list):
+            da, en = ", ".join(da), ", ".join(en)
+        lines.append(f"  {key}: {da} / {en}")
+    return "\n".join(lines)
+
+
+def main(argv):
+    args = list(argv)
+    if "-h" in args or "--help" in args:
+        print(help_text())
+        return 0
+    if args == ["--which-chrome"]:
+        found = find_chrome()
+        if found is None:
+            print("no Chrome found: set RECIPE_CARD_CHROME or run install.sh", file=sys.stderr)
+            return 1
+        print(found)
+        return 0
+    out = None
+    if "--out" in args:
+        index = args.index("--out")
+        if index + 1 >= len(args):
+            print("--out requires a path", file=sys.stderr)
+            return 64
+        out = args[index + 1]
+        del args[index:index + 2]
+    if len(args) != 1:
+        print("Usage: recipe-card <spec.json> [--out <file.png>]   (--help for the spec format)", file=sys.stderr)
+        return 64
+    try:
+        with open(args[0], encoding="utf-8") as handle:
+            spec = json.load(handle)
+        if not isinstance(spec, dict) or not isinstance(spec.get("title"), str) or not spec["title"].strip():
+            raise SpecError('spec needs a non-empty "title"')
+        lang = check_lang(spec)
+        kind = spec.get("kind") or ("plan" if "days" in spec else "recipe")
+        if kind == "week":
+            check_week(spec)
+        elif kind == "plan":
+            check_plan(spec)
+        elif kind == "steps":
+            check_steps(spec)
+        elif kind == "recipe":
+            check(spec.get("recipe"))
+            if is_ingredient(spec["recipe"]):
+                raise SpecError('"recipe" must be a step ({"do": ..., "with": [...]}), not an ingredient')
+            for key in ("start", "tools", "notes"):
+                if key in spec and not (isinstance(spec[key], list) and all(isinstance(n, str) and n.strip() for n in spec[key])):
+                    raise SpecError(f'"{key}" must be a list of non-empty strings')
+            lint(spec)
+        else:
+            raise SpecError('"kind" must be recipe, plan, week or steps')
+    except (OSError, json.JSONDecodeError, SpecError) as error:
+        print(f"invalid spec: {error}", file=sys.stderr)
+        return 64
+    if out is None:
+        # Named after the spec file, not the title: a meal plan and a week
+        # overview can share a title and must not overwrite each other.
+        out = str(pathlib.Path(args[0]).with_suffix(".png"))
+    background = PAPER
+    size = (WIDTH_CSS, 3000)
+    fixed = False
+    if kind == "week":
+        candidates = [(level, None) for level in range(len(WEEK_LEVELS))]
+        background = NIGHT
+
+        def build(level, _first, with_check=False):
+            return week_page(spec, lang, level, with_check=with_check)
+    elif kind == "plan":
+        candidates = [(level, None) for level in range(len(PLAN_LEVELS))]
+
+        def build(level, _first, with_check=False):
+            return plan_page(spec, lang, level, with_check=with_check)
+    elif kind == "steps":
+        candidates = [(level, None) for level in range(len(STEPS_LEVELS))]
+        size = STEPS_SIZE
+        fixed = True
+
+        def build(level, _first, with_check=False):
+            return steps_page(spec, lang, level, with_check=with_check)
+    else:
+        widths = first_widths(depth(spec["recipe"]))
+        candidates = [(level, first) for level in range(len(LEVELS)) for first in widths]
+
+        def build(level, first, with_check=False):
+            return page(spec, lang, level, first, with_check=with_check)
+    if Image is None:
+        print("render failed: Pillow is not installed: run install.sh", file=sys.stderr)
+        return 1
+    try:
+        # Measure the real layout, airiest first (density levels; for recipes
+        # also a wide then narrower ingredient column). Take the first layout
+        # where nothing spills or crams and the card is not too tall;
+        # otherwise the readable layout with the lowest height.
+        readable = []
+        last_issues = []
+        for level, first in candidates:
+            issues, ratio = measure(build(level, first, with_check=True), size)
+            if issues:
+                last_issues = issues
+                continue
+            readable.append((ratio, level, first))
+            if ratio <= MAX_RATIO:
+                break
+        if not readable:
+            listed = "; ".join(
+                f"'{issue['text'][:40]}{'…' if len(issue['text']) > 40 else ''}': {issue['problem']}"
+                for issue in last_issues
+            )
+            print(f"does not fit: {listed} — shorten these texts or split the step", file=sys.stderr)
+            return 65
+        ratio, level, first = readable[-1] if readable[-1][0] <= MAX_RATIO else min(readable)
+        render(build(level, first), out, background, size, fixed)
+    except (subprocess.SubprocessError, OSError, RuntimeError, ValueError) as error:
+        print(f"render failed: {error}", file=sys.stderr)
+        return 1
+    if ratio > MAX_RATIO:
+        print(f"warning: card is tall ({ratio}:1) even at the most compact layout; "
+              "chat apps will shrink it — shorten texts or merge ingredients", file=sys.stderr)
+    print(os.path.abspath(out))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

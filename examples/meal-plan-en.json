@@ -1,0 +1,81 @@
+{
+  "lang": "en",
+  "title": "Week 44",
+  "subtitle": "26–30 October · 2 adults, 2 kids",
+  "days": [
+    {
+      "day": "Monday",
+      "date": "26/10",
+      "dish": "Chicken curry with rice",
+      "details": "Apple, leek and mango chutney",
+      "offer": "chicken breast −30%",
+      "time": "35 min"
+    },
+    {
+      "day": "Tuesday",
+      "date": "27/10",
+      "dish": "Danish meatballs with potatoes and gravy",
+      "details": "Cucumber salad",
+      "offer": "minced pork −25%",
+      "time": "50 min"
+    },
+    {
+      "day": "Wednesday",
+      "date": "28/10",
+      "dish": "Salmon with lemon butter",
+      "details": "Roast potatoes and sugar snaps",
+      "offer": "salmon fillet −26%",
+      "time": "40 min"
+    },
+    {
+      "day": "Thursday",
+      "date": "29/10",
+      "dish": "Crispy pork belly with parsley sauce",
+      "details": "Boiled potatoes and beetroot",
+      "offer": "pork belly −35%",
+      "time": "45 min"
+    },
+    {
+      "day": "Friday",
+      "date": "30/10",
+      "dish": "Pizza night",
+      "highlight": true,
+      "items": [
+        "Homemade dough and tomato sauce",
+        "Mozzarella, ham and mushrooms",
+        "Rocket on top at the end"
+      ],
+      "time": "1 h"
+    }
+  ],
+  "footer": {
+    "saving": "approx. 210 kr",
+    "total": "approx. 1,240 kr",
+    "staples": [
+      {
+        "amount": "10",
+        "name": "eggs"
+      },
+      {
+        "amount": "2 l",
+        "name": "milk"
+      },
+      {
+        "amount": "1",
+        "name": "rye bread"
+      },
+      {
+        "amount": "250 g",
+        "name": "butter"
+      },
+      {
+        "amount": "1 kg",
+        "name": "oats"
+      },
+      {
+        "amount": "1 bunch",
+        "name": "bananas"
+      }
+    ]
+  }
+}

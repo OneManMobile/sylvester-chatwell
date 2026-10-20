@@ -1,0 +1,136 @@
+#!/bin/sh
+''':'
+py="$(dirname "$0")/../.venv/bin/python"
+[ -x "$py" ] || py=python3
+exec "$py" "$0" "$@"
+'''
+"""Check (and if possible renew) the nemlig.com login.
+
+Exit codes:
+  0  signed in (already, or after an automatic re-login)
+  1  automatic re-login failed (password changed?) — fix the stored login
+  3  not connected: no valid session and no stored credentials
+  4  nemlig.com unreachable or the CLI is broken — try later / run ./install.sh
+
+When the session is missing or expired, credentials are taken from, in order:
+  1. Grok Bot secrets / environment: NEMLIG_EMAIL + NEMLIG_PASSWORD
+     (preferred — the Bot uses them by name and never sees the password).
+  2. Credentials file <login dir>/credentials, mode 600: line 1 e-mail,
+     line 2 password. Convenient, but the password sits in plain text on the
+     Bot's computer.
+  3. Nothing stored → exit 3. The user takes over the Bot's computer and types
+     in the terminal: bin/nemlig account login <email>
+     Only a session cookie is kept; when nemlig.com ends the session, they
+     log in again the same way.
+The password is typed into the CLI's password prompt through a
+pseudo-terminal — never passed as an argument, never printed.
+The login dir is $NEMLIG_CONFIG_DIR, else $SYLVESTER_STATE/nemlig-cli, else
+/workspace/.sylvester/nemlig-cli, else ~/.config/sylvester-chatwell/nemlig-cli.
+"""
+import os
+import pty
+import select
+import stat
+import subprocess
+import sys
+import time
+
+NEMLIG = os.path.join(os.path.dirname(os.path.realpath(__file__)), "nemlig")
+
+
+def login_dir() -> str:
+    if os.environ.get("NEMLIG_CONFIG_DIR"):
+        return os.environ["NEMLIG_CONFIG_DIR"]
+    if os.environ.get("SYLVESTER_STATE"):
+        state = os.environ["SYLVESTER_STATE"]
+    elif os.path.isdir("/workspace") and os.access("/workspace", os.W_OK):
+        state = "/workspace/.sylvester"
+    else:
+        config = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+        state = os.path.join(config, "sylvester-chatwell")
+    return os.path.join(state, "nemlig-cli")
+
+
+def status() -> int:
+    """Exit code of `nemlig account status`: 0 ok, 2 not signed in, 3 down."""
+    try:
+        return subprocess.run(
+            [NEMLIG, "account", "status", "--json"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=60,
+            env=child_env(),
+        ).returncode
+    except (OSError, subprocess.TimeoutExpired):
+        return 3
+
+
+def child_env() -> dict:
+    """The CLI never needs the password in its environment."""
+    return {k: v for k, v in os.environ.items() if k != "NEMLIG_PASSWORD"}
+
+
+def login(email: str, password: str) -> bool:
+    # `nemlig account login` reads the password only from a terminal.
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execve(NEMLIG, [NEMLIG, "account", "login", email], child_env())
+    buffer = b""
+    sent = False
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        ready, _, _ = select.select([fd], [], [], 1)
+        if not ready:
+            continue
+        try:
+            chunk = os.read(fd, 1024)
+        except OSError:
+            break
+        if not chunk:
+            break
+        buffer += chunk
+        if not sent and b"password" in buffer.lower():
+            os.write(fd, password.encode() + b"\r")
+            sent = True
+    _, wait_status = os.waitpid(pid, 0)
+    return os.waitstatus_to_exitcode(wait_status) == 0
+
+
+def main() -> int:
+    code = status()
+    if code == 0:
+        print("nemlig: signed in")
+        return 0
+    if code != 2:
+        print("nemlig: nemlig.com unreachable or CLI broken — try again later; if it persists run ./install.sh")
+        return 4
+    directory = login_dir()
+    email = os.environ.get("NEMLIG_EMAIL", "").strip()
+    password = os.environ.get("NEMLIG_PASSWORD", "")
+    source = "secrets NEMLIG_EMAIL/NEMLIG_PASSWORD"
+    if not (email and password):
+        source = "credentials file"
+        credentials = os.path.join(directory, "credentials")
+        try:
+            if os.stat(credentials).st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+                os.chmod(credentials, 0o600)
+            with open(credentials, encoding="utf-8") as handle:
+                lines = [line.strip() for line in handle if line.strip()]
+        except FileNotFoundError:
+            lines = []
+        if len(lines) < 2:
+            if os.path.exists(os.path.join(directory, "session.json")):
+                print("nemlig: not connected (session expired) — log in again: bin/nemlig account login <email>")
+            else:
+                print("nemlig: not connected — log in: bin/nemlig account login <email>")
+            return 3
+        email, password = lines[0], lines[1]
+    if login(email, password) and status() == 0:
+        print(f"nemlig: logged in again from {source}")
+        return 0
+    print(f"nemlig: automatic login from {source} FAILED (password changed?) — update it, or log in by hand: bin/nemlig account login <email>")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

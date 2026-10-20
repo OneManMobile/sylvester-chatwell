@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Quick health check for Sylvester Chatwell. Run it before using the tools.
+#   bin/doctor            all checks, incl. the nemlig.com login (network)
+#   bin/doctor --offline  skip the nemlig.com login check
+# Exit 0: installed and working (the nemlig login line is information only).
+# Exit 1: something is missing — the last line says how to fix it.
+set -uo pipefail
+REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+offline=0
+[ "${1:-}" = --offline ] && offline=1
+
+failed=0
+ok() { printf 'ok    %s\n' "$*"; }
+bad() { printf 'FAIL  %s\n' "$*"; failed=1; }
+with_timeout() {
+  local seconds=$1; shift
+  if command -v timeout >/dev/null 2>&1; then timeout "$seconds" "$@"; else "$@"; fi
+}
+
+if [ -n "${SYLVESTER_HOUSEHOLD:-}" ]; then
+  household=$SYLVESTER_HOUSEHOLD
+elif [ -d /workspace ] && [ -w /workspace ]; then
+  household=/workspace/sylvester-household
+elif [ -n "${SYLVESTER_STATE:-}" ]; then
+  household=$SYLVESTER_STATE/household
+else
+  household=${XDG_CONFIG_HOME:-$HOME/.config}/sylvester-chatwell/household
+fi
+
+if "$REPO/.venv/bin/python" -c 'import PIL, pyphen, requests' 2>/dev/null; then
+  ok "python (.venv with Pillow, pyphen, requests)"
+else
+  bad "python: .venv missing or incomplete"
+fi
+
+if find "$REPO/fonts" -type f \( -name '*.ttf' -o -name '*.otf' -o -name '*.woff2' \) 2>/dev/null | grep -q .; then
+  ok "fonts"
+else
+  bad "fonts: no font files in fonts/"
+fi
+
+chrome=$("$REPO/bin/recipe-card" --which-chrome 2>/dev/null)
+if [ -z "$chrome" ]; then
+  bad "chrome: not found"
+else
+  # A real (tiny) render proves Python, fonts and Chrome work together.
+  tmp=$(mktemp -d)
+  printf '%s\n' '{"title": "Doctor", "tools": ["Gryde"], "recipe": {"do": "Kog 5 min", "with": [{"amount": "1 l", "name": "vand"}]}}' >"$tmp/doctor.json"
+  if with_timeout 180 "$REPO/bin/recipe-card" "$tmp/doctor.json" >/dev/null 2>"$tmp/err" && [ -s "$tmp/doctor.png" ]; then
+    ok "recipe-card renders (chrome: $chrome)"
+  else
+    bad "recipe-card: test render failed with $chrome: $(tail -n 1 "$tmp/err")"
+  fi
+  rm -rf "$tmp"
+fi
+
+if version=$("$REPO/bin/nemlig" --version 2>/dev/null); then
+  ok "nemlig CLI ($version)"
+else
+  bad "nemlig CLI: bin/nemlig does not run"
+fi
+
+if [ -f "$household/preferences.md" ]; then
+  ok "household files ($household)"
+else
+  bad "household files: $household/preferences.md missing"
+fi
+
+if [ "$failed" = 1 ]; then
+  echo "Fix: run $REPO/install.sh (then bin/doctor again)"
+  exit 1
+fi
+
+if [ "$offline" = 0 ]; then
+  login=$("$REPO/bin/nemlig-keepalive" 2>&1)
+  printf 'info  %s\n' "$login"
+fi
+echo "doctor: all good"

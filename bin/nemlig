@@ -1,0 +1,37 @@
+#!/bin/sh
+# nemlig.com CLI (Nemlig.com-CLI + this repo's patches), installed by install.sh.
+# The login session lives in a durable folder so it survives computer updates:
+#   $NEMLIG_CONFIG_DIR, else $SYLVESTER_STATE/nemlig-cli,
+#   else /workspace/.sylvester/nemlig-cli (Grok Bot), else ~/.config/sylvester-chatwell/nemlig-cli
+set -eu
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+
+if [ -z "${NEMLIG_CONFIG_DIR:-}" ]; then
+  if [ -n "${SYLVESTER_STATE:-}" ]; then
+    state=$SYLVESTER_STATE
+  elif [ -d /workspace ] && [ -w /workspace ]; then
+    state=/workspace/.sylvester
+  else
+    state=${XDG_CONFIG_HOME:-$HOME/.config}/sylvester-chatwell
+  fi
+  NEMLIG_CONFIG_DIR=$state/nemlig-cli
+fi
+export NEMLIG_CONFIG_DIR
+
+cli=$REPO/.deps/nemlig-cli/src/cli.js
+if [ ! -f "$cli" ]; then
+  echo "nemlig CLI is not installed. Fix: run $REPO/install.sh" >&2
+  exit 1
+fi
+
+node=""
+if command -v node >/dev/null 2>&1 &&
+  [ "$(node -e 'process.stdout.write(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)" -ge 20 ]; then
+  node=$(command -v node)
+elif [ -x "$REPO/.deps/node/bin/node" ]; then
+  node=$REPO/.deps/node/bin/node
+else
+  echo "Node.js 20+ not found. Fix: run $REPO/install.sh" >&2
+  exit 1
+fi
+exec "$node" "$cli" "$@"

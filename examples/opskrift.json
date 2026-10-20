@@ -1,0 +1,98 @@
+{
+  "title": "Frikadeller med kartofler og brun sovs",
+  "subtitle": "4 personer · ca. 50 min",
+  "start": [
+    "Sæt vand over til kartoflerne"
+  ],
+  "tools": [
+    "Stor stegepande",
+    "Gryde m. låg",
+    "Rivejern",
+    "Skål"
+  ],
+  "recipe": {
+    "do": "Anret med\nkartofler og sovs.\nSalat ved siden af",
+    "with": [
+      {
+        "do": "Kog 15-20 min\nmed låg på",
+        "with": [
+          {
+            "amount": "1 kg",
+            "name": "kartofler"
+          },
+          {
+            "amount": "1 tsk",
+            "name": "salt"
+          }
+        ]
+      },
+      {
+        "do": "Tag frikadellerne op.\nPisk mel i vand,\nkog op 3 min",
+        "with": [
+          {
+            "do": "Rør farsen, form 12 boller.\nSteg i smør 6 min pr. side",
+            "with": [
+              {
+                "amount": "1",
+                "name": "løg, fintrevet"
+              },
+              {
+                "amount": "500 g",
+                "name": "hakket svinekød"
+              },
+              {
+                "amount": "1",
+                "name": "æg"
+              },
+              {
+                "amount": "3 spsk",
+                "name": "havregryn"
+              },
+              {
+                "amount": "1 dl",
+                "name": "mælk"
+              },
+              {
+                "amount": "1 tsk",
+                "name": "salt og peber"
+              },
+              {
+                "amount": "30 g",
+                "name": "smør"
+              }
+            ]
+          },
+          {
+            "amount": "3 dl",
+            "name": "vand"
+          },
+          {
+            "amount": "2 spsk",
+            "name": "hvedemel"
+          },
+          {
+            "amount": "1",
+            "name": "bouillonterning"
+          }
+        ]
+      },
+      {
+        "do": "Snit tyndt, vend\nmed eddike\nog sukker",
+        "with": [
+          {
+            "amount": "1",
+            "name": "agurk"
+          },
+          {
+            "amount": "½ dl",
+            "name": "eddike"
+          },
+          {
+            "amount": "2 spsk",
+            "name": "sukker"
+          }
+        ]
+      }
+    ]
+  }
+}

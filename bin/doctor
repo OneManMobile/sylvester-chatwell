@@ -75,4 +75,23 @@ if [ "$offline" = 0 ]; then
   login=$("$REPO/bin/nemlig-keepalive" 2>&1)
   printf 'info  %s\n' "$login"
 fi
+
+# Telegram is optional: report it only when a token is present, never fail.
+if [ -n "${SYLVESTER_STATE:-}" ]; then
+  state=$SYLVESTER_STATE
+elif [ -d /workspace ] && [ -w /workspace ]; then
+  state=/workspace/.sylvester
+else
+  state=${XDG_CONFIG_HOME:-$HOME/.config}/sylvester-chatwell
+fi
+if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || [ -s "$state/telegram/token" ]; then
+  if [ "$offline" = 1 ]; then
+    printf 'info  telegram: token stored (not checked offline)\n'
+  elif tg=$(with_timeout 60 "$REPO/bin/telegram" status 2>/dev/null); then
+    bot=$(printf '%s\n' "$tg" | sed -n 's/^ *"bot": "\(.*\)",*$/\1/p')
+    printf 'info  telegram: connected as %s\n' "${bot:-?}"
+  else
+    printf 'info  telegram: not reachable or token rejected (bin/telegram status)\n'
+  fi
+fi
 echo "doctor: all good"

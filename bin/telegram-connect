@@ -1,0 +1,129 @@
+#!/bin/sh
+''':'
+py="$(dirname "$0")/../.venv/bin/python"
+[ -x "$py" ] || py=python3
+exec "$py" "$0" "$@"
+'''
+"""Connect a Telegram bot through a one-page form on the Bot's own computer.
+
+Same "Take over" pattern as bin/nemlig-login: the Bot opens this page in its
+browser, the user takes over, pastes the bot token from @BotFather and
+chooses "I'm done". The token goes from the page to Telegram's getMe check and
+into <state>/telegram/token (mode 600) — never into the chat, the model, a
+log, argv or an environment variable. On success the page shows the bot's
+@username and a t.me link, and the bot is switched to polling mode
+(deleteWebhook) for bin/telegram inbox.
+
+Usage:
+  bin/telegram-connect [--lang da|en] [--port N] [--minutes N] [--foreground]
+
+By default it starts in the background and prints one JSON line:
+  {"url": "http://127.0.0.1:8766/<token>", "expires_in_min": 15, "pid": 1234}
+The page closes after success, 5 failed attempts or --minutes. Check the
+result with bin/telegram status (exit 0 = connected).
+"""
+import argparse
+import html
+import os
+import re
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.dont_write_bytecode = True
+sys.path.insert(0, HERE)
+import _secretpage as sp  # noqa: E402
+import _telegram as tg  # noqa: E402
+
+TOKEN_RE = re.compile(r"^[0-9]{3,20}:[A-Za-z0-9_-]{20,100}$")
+
+TEXT = {
+    "da": {
+        "title": "Forbind Telegram",
+        "lead": "Indsæt token'et, som @BotFather gav dig. Det gemmes kun på Bottens computer — "
+                "det kommer aldrig i chatten, og Sylvester ser det ikke.",
+        "token": "Bot-token (fra @BotFather)",
+        "submit": "Forbind",
+        "working": "Forbinder …",
+        "ok_title": "Forbundet ✅",
+        "ok_body": "Telegram-botten {name} er forbundet. Åbn {link} på din telefon og send /start. "
+                   "Tryk så på \u201cI'm done\u201d i Grok Bot og skriv til Sylvester, at du er færdig.",
+        "fail": "Telegram kender ikke det token. Kopiér hele linjen fra @BotFather og prøv igen.",
+        "format": "Det ligner ikke et bot-token. Det ser sådan ud: 123456789:ABC-def…",
+        "down": "Telegram svarer ikke lige nu. Prøv igen om lidt.",
+        "closed_title": "Siden er lukket",
+        "closed_body": "Bed Sylvester om at åbne en ny side.",
+    },
+    "en": {
+        "title": "Connect Telegram",
+        "lead": "Paste the token @BotFather gave you. It is stored only on the Bot's computer — "
+                "it never enters the chat, and Sylvester never sees it.",
+        "token": "Bot token (from @BotFather)",
+        "submit": "Connect",
+        "working": "Connecting …",
+        "ok_title": "Connected ✅",
+        "ok_body": "The Telegram bot {name} is connected. Open {link} on your phone and send /start. "
+                   "Then choose \u201cI'm done\u201d in Grok Bot and tell Sylvester you're finished.",
+        "fail": "Telegram doesn't know that token. Copy the whole line from @BotFather and try again.",
+        "format": "That doesn't look like a bot token. It looks like this: 123456789:ABC-def…",
+        "down": "Telegram isn't answering right now. Try again in a moment.",
+        "closed_title": "This page is closed",
+        "closed_body": "Ask Sylvester to open a new page.",
+    },
+}
+
+
+def render_form(t: dict, values: dict, error: str = "") -> str:
+    return f"""
+<h1>{html.escape(t['title'])}</h1>
+<p>{html.escape(t['lead'])}</p>
+{sp.error_box(error)}
+<form method='post' autocomplete='off' onsubmit="{sp.submit_script(t)}">
+  <label for='token'>{html.escape(t['token'])}</label>
+  <input id='token' name='token' type='password' autocomplete='off' spellcheck='false' required autofocus>
+  <button type='submit'>{html.escape(t['submit'])}</button>
+</form>"""
+
+
+def make_submit(t: dict):
+    def submit(fields: dict):
+        token = re.sub(r"\s+", "", fields.get("token", ""))
+        if token.lower().startswith("bot"):  # pasted with the URL prefix
+            token = token[3:]
+        if not TOKEN_RE.match(token):
+            return ("invalid", t["format"], {})
+        try:
+            me = tg.call(token, "getMe", timeout=20)
+            tg.call(token, "deleteWebhook", {"drop_pending_updates": False}, timeout=20)
+        except tg.NotConnected:
+            return ("fail", t["fail"], {})
+        except (tg.Unreachable, tg.ApiError):
+            return ("fail", t["down"], {})
+        tg.save_token(token)
+        token = ""
+        username = str(me.get("username") or "")
+        tg.write_json(os.path.join(tg.tg_dir(), "bot.json"),
+                      {"id": me.get("id"), "username": username, "name": me.get("first_name", "")})
+        link_url = f"https://t.me/{username}"
+        name = html.escape(f"@{username}")
+        link = f"<a href='{html.escape(link_url, quote=True)}'>{html.escape(link_url)}</a>"
+        body = html.escape(t["ok_body"]).replace("{name}", f"<b>{name}</b>").replace("{link}", link)
+        return ("done", f"<h1>{html.escape(t['ok_title'])}</h1><p>{body}</p>")
+    return submit
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Connect a Telegram bot through a one-page form on the Bot's own computer.")
+    parser.add_argument("--lang", choices=sorted(TEXT), default="da")
+    parser.add_argument("--port", type=int, default=8766)
+    parser.add_argument("--minutes", type=float, default=15)
+    parser.add_argument("--foreground", action="store_true", help="serve in the foreground")
+    args = parser.parse_args()
+
+    t = TEXT[args.lang]
+    server = sp.SecretServer(("127.0.0.1", sp.free_port(args.port, "telegram-connect")), t,
+                             lambda values, error: render_form(t, values, error), make_submit(t))
+    return sp.run(server, args.minutes, args.foreground)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

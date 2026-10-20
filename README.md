@@ -68,6 +68,12 @@ both languages, are in [`examples/da/`](examples/da) and
 - Change your basket without being asked.
 - Shop anywhere other than nemlig.com.
 
+## Optional: family chat on Telegram
+
+Want your partner and kids to plan meals with Sylvester too? Connect a
+Telegram bot and he answers in DMs and your family group (within ~5 minutes —
+he checks on a schedule). See [docs/telegram.md](docs/telegram.md).
+
 ## Safety and privacy
 
 - **Never orders.** The tooling has no command to place an order; the Bot is
@@ -118,7 +124,12 @@ bin/recipe-card      renders card specs (JSON) to PNG with headless Chrome
 bin/nemlig           the nemlig.com CLI (Nemlig.com-CLI + patches)
 bin/nemlig-keepalive checks / renews the nemlig.com login (exit 0/1/3/4)
 bin/nemlig-login     one-page login form the user fills in after "Take over"
-skills/              Grok Bot skills: onboarding, nemlig-household, recipe-cards, family-week
+bin/telegram         optional family chat: poll, reply, allow/deny people (Telegram Bot API)
+bin/telegram-connect one-page form for the Telegram bot token, filled in after "Take over"
+bin/_secretpage.py   shared one-page form server used by nemlig-login and telegram-connect
+bin/_telegram.py     shared Telegram helpers (token, state, API calls)
+skills/              Grok Bot skills: onboarding, nemlig-household, recipe-cards, family-week, telegram
+docs/telegram.md     how to set up the optional Telegram family chat
 templates/           household files copied to /workspace/sylvester-household
 nemlig-cli-patches/  patches applied to Nemlig.com-CLI (offers list, slot changes)
 fonts/               OFL fonts used by the cards

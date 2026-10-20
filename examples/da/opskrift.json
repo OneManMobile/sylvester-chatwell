@@ -1,20 +1,22 @@
 {
   "lang": "da",
   "title": "Frikadeller med stuvet spidskål",
-  "subtitle": "4 personer · ca. 35 min",
+  "subtitle": "4 personer · ca. 50 min",
   "tools": [
     "Stegepande",
+    "Gryde med låg",
     "Kasserolle",
-    "Skål"
+    "Skål",
+    "Piskeris"
   ],
   "recipe": {
-    "do": "Anret\nfrikadellerne\nmed spidskålen",
+    "do": "Server\nfrikadellerne\nmed kålen",
     "with": [
       {
-        "do": "Steg 5 min\npr. side",
+        "do": "Steg ca.\n6 min pr.\nside ved\njævn varme",
         "with": [
           {
-            "do": "Rør farsen,\nform 12 boller",
+            "do": "Rør farsen\n2–3 min. Hvil\n30 min, form\n12 boller",
             "with": [
               {
                 "amount": "500 g",
@@ -29,7 +31,11 @@
                 "name": "æg"
               },
               {
-                "amount": "3 spsk",
+                "amount": "2 spsk",
+                "name": "hvedemel"
+              },
+              {
+                "amount": "2 spsk",
                 "name": "havregryn"
               },
               {
@@ -39,6 +45,10 @@
               {
                 "amount": "1 tsk",
                 "name": "salt"
+              },
+              {
+                "amount": "½ tsk",
+                "name": "peber"
               }
             ]
           },
@@ -49,14 +59,35 @@
         ]
       },
       {
-        "do": "Simr 5 min,\nsmag til",
+        "do": "Vend kålen i,\nvarm 2 min,\nsmag til",
         "with": [
           {
-            "do": "Svits 3 min",
+            "do": "Damp under\nlåg 5 min. Gem\n1 dl kogelage,\nhak kålen",
             "with": [
               {
-                "amount": "1",
-                "name": "spidskål, snittet"
+                "amount": "2",
+                "name": "spidskål (ca. 1 kg)"
+              },
+              {
+                "amount": "3 dl",
+                "name": "vand"
+              },
+              {
+                "amount": "1½ tsk",
+                "name": "salt"
+              }
+            ]
+          },
+          {
+            "do": "Pisk mel i\nmælken. Rør\nkogelage og\nsmør i, kog\n5 min under\nomrøring",
+            "with": [
+              {
+                "amount": "2½ spsk",
+                "name": "hvedemel"
+              },
+              {
+                "amount": "3½ dl",
+                "name": "mælk"
               },
               {
                 "amount": "15 g",
@@ -65,8 +96,8 @@
             ]
           },
           {
-            "amount": "2 dl",
-            "name": "piskefløde"
+            "amount": "¼ tsk",
+            "name": "revet muskatnød"
           },
           "salt og peber"
         ]

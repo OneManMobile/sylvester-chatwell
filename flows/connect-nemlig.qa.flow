@@ -1,0 +1,118 @@
+FLOW: connect-nemlig.qa.flow
+DESCRIPTION: Connecting nemlig.com without the password ever entering the chat, and staying connected
+LAST UPDATED: 2026-10-20
+
+NOTE: The password is typed by the human on a one-page form (bin/nemlig-login) that runs on the Bot's
+own computer and is opened in the Bot's browser. The human uses Grok Bot's "Take over" to type on it.
+The page hands the password to the nemlig CLI's password prompt; it is never logged, stored in chat,
+or shown to the model. "Husk mig" (Remember me) stores it in a mode-600 file so Sylvester can log in
+again himself. Grok Bot secrets NEMLIG_EMAIL / NEMLIG_PASSWORD are an alternative when available.
+
+================================================================================
+SECTION 1: FIRST CONNECTION
+================================================================================
+
+TEST: "Connect nemlig — happy path"
+
+PRECONDITIONS:
+- Sylvester is set up (setup.qa.flow)
+- I have a nemlig.com account
+
+STEP 1: "Give the e-mail"
+WHEN Sylvester asks for my nemlig e-mail (or I write "forbind nemlig")
+AND I reply with my e-mail address
+THEN he says he is opening a login page and asks me to tap Take over
+
+STEP 2: "Take over and log in"
+WHEN I tap "Take over" on his message
+THEN I see the Bot's browser with a cream-coloured "Forbind nemlig.com" page
+AND my e-mail is already filled in
+WHEN I type my password, tap "Log ind", then "I'm done"
+THEN the page shows "Forbundet ✅"
+
+STEP 3: "Confirmation"
+WHEN I hand control back
+THEN Sylvester checks the connection and writes "Forbundet til nemlig.com ✅"
+AND my password appears nowhere in the chat
+
+RESULT: nemlig is connected; offers, prices and the basket are now available.
+
+================================================================================
+
+TEST: "Wrong password"
+
+STEP 1: "Mistype"
+WHEN I type a wrong password on the page
+THEN the page says the login failed and lets me try again (e-mail kept, password field empty)
+AND after 5 failed attempts the page closes
+AND Sylvester offers a new page when I tell him
+
+RESULT: Mistakes are recoverable without the chat ever seeing the password.
+
+================================================================================
+
+TEST: "I try to paste the password in chat"
+
+STEP 1: "Paste in chat"
+WHEN I write my password to Sylvester in the chat
+THEN he tells me not to, does not repeat it, does not use it
+AND he opens the login page instead
+
+RESULT: The password never travels through the model by Sylvester's doing.
+
+================================================================================
+
+TEST: "Skip nemlig"
+
+STEP 1: "Decline"
+WHEN I say I'd rather not connect nemlig now
+THEN Sylvester continues with the preferences interview
+AND later meal plans are made without offers, prices or basket, with one line saying how to connect
+
+RESULT: Everything except shopping works without nemlig.
+
+================================================================================
+SECTION 2: STAYING CONNECTED
+================================================================================
+
+TEST: "Session expires — remembered login"
+
+PRECONDITIONS:
+- I ticked "Husk mig" when connecting
+- nemlig.com has ended the session
+
+STEP 1: "Ask for something with nemlig"
+WHEN I ask Sylvester to fill the basket
+THEN he logs in again by himself and does the task
+AND I am not asked for anything
+
+RESULT: Remembered logins renew silently.
+
+================================================================================
+
+TEST: "Session expires — not remembered"
+
+PRECONDITIONS:
+- I did not tick "Husk mig"
+- nemlig.com has ended the session
+
+STEP 1: "Ask for something with nemlig"
+WHEN I ask Sylvester to fill the basket
+THEN he says nemlig needs a new login and opens the login page (same as SECTION 1)
+AND after I log in he continues the task
+
+RESULT: Expired sessions lead back to the login page, never to a silent failure.
+
+================================================================================
+
+TEST: "Password changed on nemlig.com"
+
+PRECONDITIONS:
+- "Husk mig" was ticked, then I changed my password on nemlig.com
+
+STEP 1: "Automatic login fails"
+WHEN Sylvester tries to log in again by himself
+THEN he tells me the stored login was rejected and opens the login page
+AND logging in there with "Husk mig" replaces the stored password
+
+RESULT: A stale stored password is replaced, not retried forever.

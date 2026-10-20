@@ -1,0 +1,171 @@
+FLOW: family-chat-telegram.qa.flow
+DESCRIPTION: Optional — the whole family talks to Sylvester on Telegram (DMs and a family group) and plans meals together
+LAST UPDATED: 2026-10-20
+
+NOTE: Expected behaviour is event-driven, like any chat: a message arrives and Sylvester answers it —
+not a clock that checks every few minutes. Grok Bot has no Telegram channel, but a routine can be started
+by a webhook call (POST with "Authorization: Bearer <key>"). Telegram's setWebhook cannot send that
+header, so a tiny always-on relay (e.g. a free Cloudflare Worker) receives Telegram's call, checks
+Telegram's secret header and forwards the update to the routine's webhook. The owner manages everything
+(who has access, settings, logins) in the Grok Bot app, never from Telegram.
+
+================================================================================
+SECTION 1: CONNECTING TELEGRAM
+================================================================================
+
+TEST: "Connect a Telegram bot — happy path"
+
+PRECONDITIONS:
+- Sylvester is set up; I use the Grok Bot desktop app (webhook keys are only shown on desktop)
+
+STEP 1: "Create the Telegram bot"
+WHEN I open @BotFather in Telegram and send /newbot with a name and username
+THEN BotFather gives me a token
+
+STEP 2: "Hand Sylvester the token"
+WHEN I write "forbind Telegram" to Sylvester
+THEN he opens a token page on his computer and asks me to tap Take over
+WHEN I paste the token, save, and tap "I'm done"
+THEN the page shows ✅ with the bot's @username, and the token never appears in the chat
+
+STEP 3: "Wire up instant delivery"
+THEN Sylvester guides me through the one-time relay setup and the routine's webhook
+AND he confirms with a test message to me on Telegram
+
+RESULT: Telegram is connected and messages reach Sylvester as they arrive.
+
+================================================================================
+SECTION 2: WHO MAY TALK TO SYLVESTER
+================================================================================
+
+TEST: "Owner says hello"
+
+STEP 1: "First message"
+WHEN I send /start to the bot from my phone
+THEN Sylvester asks me in the Grok Bot app whether that Telegram user is me
+WHEN I say yes
+THEN he greets me on Telegram within seconds
+
+RESULT: The owner is recognised; nobody else is answered yet.
+
+================================================================================
+
+TEST: "Partner and children join"
+
+STEP 1: "Partner writes"
+WHEN my partner writes to the bot
+THEN Sylvester asks me in the Grok Bot app: "Mette skrev til Sylvester på Telegram — skal hun have adgang? Voksen eller barn?"
+AND my partner gets no answer until I approve
+WHEN I answer "ja, voksen"
+THEN Sylvester answers her pending message
+
+STEP 2: "Child writes"
+WHEN my 12-year-old writes and I approve them as "barn"
+THEN Sylvester answers them by name
+
+RESULT: Access is per person, approved by the owner only.
+
+================================================================================
+
+TEST: "Stranger writes"
+
+STEP 1: "Unknown sender"
+WHEN someone I don't know finds the bot and writes to it
+THEN they get no answer
+AND I am asked once in the Grok Bot app; if I say no, they are blocked silently
+
+RESULT: The bot can't be used by strangers.
+
+================================================================================
+
+TEST: "Approval requested from Telegram"
+
+STEP 1: "Someone tries to grant access in Telegram"
+WHEN an approved family member writes "giv Peter adgang" on Telegram
+THEN Sylvester says only the owner can do that in the Grok Bot app
+
+RESULT: Settings never change from a Telegram message.
+
+================================================================================
+SECTION 3: PLANNING TOGETHER
+================================================================================
+
+TEST: "Family group — planning the week"
+
+PRECONDITIONS:
+- The bot is in our family group, approved by me; partner and children approved
+
+STEP 1: "Wishes from several people"
+WHEN my partner writes "@Sylvester kan vi få laks på onsdag?"
+AND my child replies "og pizza fredag!"
+THEN Sylvester answers in the group within seconds, by name, and takes both wishes into the plan
+
+STEP 2: "Plan in the group"
+WHEN I write "@Sylvester lav planen for næste uge"
+THEN the meal-plan card is posted in the group with the wishes on their days
+
+STEP 3: "Normal chatter"
+WHEN family members chat in the group without addressing Sylvester
+THEN he stays silent
+
+RESULT: The family shapes the week together in their own group.
+
+================================================================================
+
+TEST: "Roles: child cannot change the basket"
+
+STEP 1: "Child asks to shop"
+WHEN my child writes "@Sylvester fyld kurven med slik"
+THEN Sylvester says nicely that a grown-up needs to ask, and notes the wish
+AND the basket is unchanged
+
+STEP 2: "Adult asks to shop"
+WHEN my partner writes "@Sylvester fyld kurven"
+THEN he fills the basket and posts the item list and total in the group (meal-plan-and-basket.qa.flow)
+AND still never orders
+
+RESULT: Children can wish; adults can shop; nobody can order through Sylvester.
+
+================================================================================
+
+TEST: "Photos and voice"
+
+STEP 1: "Photo"
+WHEN someone sends a photo of the fridge and asks "hvad kan vi lave?"
+THEN Sylvester uses the photo in his answer
+
+STEP 2: "Voice message"
+WHEN someone sends a voice message
+THEN he asks them to write it instead
+
+RESULT: Photos work; voice is politely declined.
+
+================================================================================
+
+TEST: "Weekly plan to the group"
+
+PRECONDITIONS:
+- Saturday routine enabled (meal-plan-and-basket.qa.flow SECTION 3)
+
+STEP 1: "Saturday"
+WHEN Saturday 09:00 comes
+THEN the meal-plan card is posted in the family group
+
+RESULT: The whole family sees the week's plan.
+
+================================================================================
+SECTION 4: TURNING IT OFF
+================================================================================
+
+TEST: "Remove a person / stop Telegram"
+
+STEP 1: "Remove someone"
+WHEN I tell Sylvester in the Grok Bot app "fjern Peter fra Telegram"
+THEN Peter's messages are no longer answered
+
+STEP 2: "Stop entirely"
+WHEN I tell Sylvester "sluk Telegram"
+THEN the routine is paused and nobody gets answers on Telegram
+AND everything else keeps working in the Grok Bot app
+
+RESULT: Telegram is fully under the owner's control.

@@ -130,6 +130,7 @@ bin/_secretpage.py   shared one-page form server used by nemlig-login and telegr
 bin/_telegram.py     shared Telegram helpers (token, state, API calls)
 skills/              Grok Bot skills: onboarding, nemlig-household, recipe-cards, family-week, telegram
 docs/telegram.md     how to set up the optional Telegram family chat
+flows/               user journeys this setup must support (*.qa.flow) and COVERAGE.md
 templates/           household files copied to /workspace/sylvester-household
 nemlig-cli-patches/  patches applied to Nemlig.com-CLI (offers list, slot changes)
 fonts/               OFL fonts used by the cards

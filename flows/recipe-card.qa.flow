@@ -1,0 +1,62 @@
+FLOW: recipe-card.qa.flow
+DESCRIPTION: A kitchen-ready recipe card for a planned dinner, in the household's language
+LAST UPDATED: 2026-10-20
+
+NOTE: Cards are PNGs rendered by bin/recipe-card on the Bot's computer and attached to the reply.
+Amounts come from what is actually in the basket / last order when nemlig is connected, otherwise from
+typical Danish pack sizes scaled to the household.
+
+================================================================================
+SECTION 1: RECIPES
+================================================================================
+
+TEST: "Recipe card for a planned day — happy path"
+
+PRECONDITIONS:
+- A meal plan exists
+
+STEP 1: "Ask"
+WHEN I write "opskrift til tirsdag"
+THEN I get a recipe card image for Tuesday's dinner
+AND it shows the title, servings and total time, ingredients with amounts, equipment,
+  and a step grid that shows which ingredients go into which step
+AND times and temperatures are realistic (no "5 minutes" for something that takes 20)
+AND servings match the household
+
+RESULT: A card I can cook from on the phone or on the fridge.
+
+================================================================================
+
+TEST: "Recipe in English"
+
+STEP 1: "Ask in English"
+WHEN I write "recipe card for Tuesday, in English"
+THEN the card's headings, units (tsp/tbsp), weekday and step texts are English
+AND product names that come from nemlig stay as nemlig spells them
+
+RESULT: Language follows the user.
+
+================================================================================
+
+TEST: "Recipe for something not on the plan"
+
+STEP 1: "Ask"
+WHEN I write "giv mig en opskrift på boller i karry"
+THEN I get a recipe card for it
+AND he asks whether to add the ingredients to the basket (he doesn't add them by himself)
+
+RESULT: Ad-hoc recipes don't change the basket without a yes.
+
+================================================================================
+
+TEST: "Card can't be rendered"
+
+PRECONDITIONS:
+- Chrome on the Bot's computer is broken
+
+STEP 1: "Ask"
+WHEN I ask for a recipe card
+THEN he runs install/doctor to repair it and retries
+AND if it still fails he sends the recipe as plain text and says the card failed
+
+RESULT: A broken renderer never blocks dinner.

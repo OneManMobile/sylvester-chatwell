@@ -1,0 +1,145 @@
+FLOW: meal-plan-and-basket.qa.flow
+DESCRIPTION: Next week's meal plan built on nemlig.com offers, delivered as a card, and the basket filled — never ordered
+LAST UPDATED: 2026-10-20
+
+NOTE: Sylvester can read offers, search products, read and change the basket and reserve a delivery
+slot. The tooling has no command to place or pay an order: the human always taps "Bestil" on nemlig.com.
+"Proof before done" — he only says items are in the basket after reading the basket back.
+
+================================================================================
+SECTION 1: THE PLAN
+================================================================================
+
+TEST: "Meal plan for next week — happy path"
+
+PRECONDITIONS:
+- Preferences saved (household-preferences.qa.flow)
+- nemlig connected (connect-nemlig.qa.flow)
+
+STEP 1: "Ask"
+WHEN I write "Lav en madplan for næste uge"
+THEN within a few minutes I get a meal-plan card image in the chat
+AND the card shows one dinner per planned day, with offer chips on dishes built around an offer,
+  cooking time, the estimated saving, and my weekly staples with amounts
+AND fixed nights (e.g. pizza Friday) are on their day
+AND no dish breaks an allergy or "we don't eat" rule
+AND no dinner repeats one from the last three weeks unless it's a favourite
+
+STEP 2: "Short message with the card"
+THEN the message under the card is one or two lines and asks if anything should be swapped
+  or if he should fill the basket
+
+RESULT: A realistic week, on one shareable card.
+
+================================================================================
+
+TEST: "Swap a day"
+
+STEP 1: "Ask for a change"
+WHEN I write "byt torsdag ud med fisk"
+THEN he sends an updated card where only Thursday changed
+AND the meal log is updated
+
+RESULT: Edits are cheap and keep the rest of the plan.
+
+================================================================================
+
+TEST: "Plan without nemlig"
+
+PRECONDITIONS:
+- nemlig not connected
+
+STEP 1: "Ask"
+WHEN I ask for a plan
+THEN I get a card without offer chips, prices or saving
+AND one line says that connecting nemlig adds this week's offers and the basket
+
+RESULT: Planning works without shopping.
+
+================================================================================
+SECTION 2: THE BASKET
+================================================================================
+
+TEST: "Fill the basket — happy path"
+
+PRECONDITIONS:
+- A plan for next week exists; nemlig connected
+
+STEP 1: "Ask"
+WHEN I write "fyld kurven" (or ask for plan and basket in one go)
+THEN Sylvester adds the ingredients for the planned dinners plus my staples, in whole packs,
+  offers first, preferring products we bought before
+AND he does not add what the plan doesn't need
+
+STEP 2: "Proof"
+THEN he reads the basket back and sends a short list (item, amount) and the basket total
+AND a link to the basket on nemlig.com
+AND he says plainly that he has not ordered — I check and tap "Bestil" myself
+
+RESULT: The basket is ready to check and order in one tap, with proof.
+
+================================================================================
+
+TEST: "Basket already has things in it"
+
+PRECONDITIONS:
+- The basket contains items I added myself
+
+STEP 1: "Fill"
+WHEN I ask him to fill the basket
+THEN he adds to the basket and does not remove or change my own items without asking
+AND the summary shows which items he added
+
+RESULT: My own additions are safe.
+
+================================================================================
+
+TEST: "Product unavailable"
+
+STEP 1: "Fill with a sold-out product"
+WHEN a planned ingredient is sold out
+THEN he picks a sensible substitute and names it in the summary
+OR asks one short question if there is no obvious substitute
+
+RESULT: Substitutions are visible, never silent.
+
+================================================================================
+
+TEST: "Asked to order or pay"
+
+STEP 1: "Ask him to order"
+WHEN I write "bestil det hele"
+THEN he says he cannot place or pay orders and that I tap "Bestil" on nemlig.com
+
+RESULT: Orders and payments are always the human's action.
+
+================================================================================
+
+TEST: "Delivery slot on request"
+
+STEP 1: "Ask for a slot"
+WHEN I write "book levering mandag morgen"
+THEN he lists the available slots that match and reserves the one I pick
+AND reminds me that nemlig holds a reserved slot for about 20 minutes, so I should order soon
+
+RESULT: Slots are only touched when I ask.
+
+================================================================================
+SECTION 3: EVERY WEEK, AUTOMATICALLY (OPTIONAL)
+================================================================================
+
+TEST: "Saturday meal plan routine"
+
+PRECONDITIONS:
+- Sylvester offered a weekly routine after onboarding and I said yes
+
+STEP 1: "Saturday 09:00"
+WHEN Saturday 09:00 comes (Europe/Copenhagen)
+THEN the meal-plan card for next week arrives in the chat without me asking
+AND he asks if he should fill the basket — he does not touch it before I answer
+
+STEP 2: "Pause"
+WHEN I write "stop lørdagsplanen" or pause the routine in the Bot's details
+THEN no more Saturday plans arrive
+
+RESULT: A weekly rhythm I can switch off.

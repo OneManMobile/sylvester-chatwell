@@ -1,0 +1,107 @@
+{
+  "lang": "en",
+  "title": "Danish meatballs with creamed pointed cabbage",
+  "subtitle": "4 servings · approx. 50 min",
+  "tools": [
+    "Frying pan",
+    "Pot with lid",
+    "Saucepan",
+    "Bowl",
+    "Whisk"
+  ],
+  "recipe": {
+    "do": "Serve the\nmeatballs with\nthe cabbage",
+    "with": [
+      {
+        "do": "Fry about\n6 min a side,\nmedium heat",
+        "with": [
+          {
+            "do": "Beat 2–3 min.\nRest 30 min,\nroll 12 balls",
+            "with": [
+              {
+                "amount": "500 g",
+                "name": "minced pork"
+              },
+              {
+                "amount": "1",
+                "name": "onion, grated"
+              },
+              {
+                "amount": "1",
+                "name": "egg"
+              },
+              {
+                "amount": "2 tbsp",
+                "name": "plain flour"
+              },
+              {
+                "amount": "2 tbsp",
+                "name": "rolled oats"
+              },
+              {
+                "amount": "1 dl",
+                "name": "milk"
+              },
+              {
+                "amount": "1 tsp",
+                "name": "salt"
+              },
+              {
+                "amount": "½ tsp",
+                "name": "pepper"
+              }
+            ]
+          },
+          {
+            "amount": "30 g",
+            "name": "butter"
+          }
+        ]
+      },
+      {
+        "do": "Fold in\ncabbage,\nheat 2 min,\nseason",
+        "with": [
+          {
+            "do": "Steam, lid on,\n5 min. Keep\n1 dl liquid,\nchop cabbage",
+            "with": [
+              {
+                "amount": "2",
+                "name": "pointed cabbages"
+              },
+              {
+                "amount": "3 dl",
+                "name": "water"
+              },
+              {
+                "amount": "1½ tsp",
+                "name": "salt"
+              }
+            ]
+          },
+          {
+            "do": "Whisk flour\ninto the milk,\nadd liquid and\nbutter. Simmer\n5 min, stirring",
+            "with": [
+              {
+                "amount": "2½ tbsp",
+                "name": "plain flour"
+              },
+              {
+                "amount": "3½ dl",
+                "name": "milk"
+              },
+              {
+                "amount": "15 g",
+                "name": "butter"
+              }
+            ]
+          },
+          {
+            "amount": "¼ tsp",
+            "name": "grated nutmeg"
+          },
+          "salt and pepper"
+        ]
+      }
+    ]
+  }
+}

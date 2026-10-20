@@ -1,0 +1,34 @@
+{
+  "kind": "steps",
+  "lang": "en",
+  "title": "Sylvester Chatwell",
+  "subtitle": "Your own household butler in Grok Bot",
+  "kicker": "Get started in 5 steps",
+  "steps": [
+    {
+      "title": "Get Grok Bot",
+      "detail": "Buy Grok Premium (x.ai/pricing). Get the Grok Bot app at x.ai/bot and sign in"
+    },
+    {
+      "title": "Create your butler",
+      "detail": "Create a Bot named Sylvester and send: “Set yourself up from github.com/OneManMobile/sylvester-chatwell”"
+    },
+    {
+      "title": "Connect nemlig.com",
+      "detail": "He opens a login page. Tap Take over, type your password, tap Log in, then I’m done"
+    },
+    {
+      "title": "Tell him how you eat",
+      "detail": "A few short questions: who eats, diet and allergies, staples, pizza night?"
+    },
+    {
+      "title": "Ask for next week’s meal plan",
+      "detail": "“Make next week’s meal plan and fill my basket.” He never orders – you tap Bestil"
+    }
+  ],
+  "bonus": {
+    "title": "Ask for a recipe card",
+    "detail": "For any day of the plan – kitchen-ready"
+  },
+  "footer": "github.com/OneManMobile/sylvester-chatwell"
+}

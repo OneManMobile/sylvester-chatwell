@@ -1,0 +1,130 @@
+From 900fc5474f832140f187d48d963e1b89ab2b207c Mon Sep 17 00:00:00 2001
+From: Sylvester <sylvester@localhost>
+Date: Tue, 6 Oct 2026 11:24:20 +0200
+Subject: [PATCH 1/2] delivery select: --accept-changes via UpdateDeliveryTime;
+ slot availability 0 = bookable
+
+---
+ src/api.js    | 11 +++++++++--
+ src/cli.js    | 32 ++++++++++++++++++++++++++------
+ src/format.js |  8 ++++----
+ 3 files changed, 39 insertions(+), 12 deletions(-)
+
+diff --git a/src/api.js b/src/api.js
+index b6e3c99..0bbe5d8 100644
+--- a/src/api.js
++++ b/src/api.js
+@@ -567,9 +567,16 @@ export class NemligApi {
+     return this.accountFetch(url);
+   }
+ 
+-  selectDeliveryTime(timeslotId) {
++  /**
++   * TryUpdateDeliveryTime only reserves when nothing changes for the new slot.
++   * When prices or availability differ it returns the diff with IsReserved
++   * false; the website then calls UpdateDeliveryTime once the user accepts.
++   */
++  selectDeliveryTime(timeslotId, { acceptChanges = false } = {}) {
+     const url = new URL(
+-      "/webapi/Delivery/TryUpdateDeliveryTime",
++      acceptChanges
++        ? "/webapi/Delivery/UpdateDeliveryTime"
++        : "/webapi/Delivery/TryUpdateDeliveryTime",
+       SITE_ORIGIN,
+     );
+     url.searchParams.set("timeslotId", String(timeslotId));
+diff --git a/src/cli.js b/src/cli.js
+index 16fe93f..135a83a 100755
+--- a/src/cli.js
++++ b/src/cli.js
+@@ -177,10 +177,15 @@ not a mutation, so it needs no --yes.
+ Example:
+   nemlig orders latest`,
+   delivery: `nemlig delivery slots [--days <n>] [--start <yyyy-mm-dd>] [--all] [--json]
+-nemlig delivery select <timeslot-id> --yes
++nemlig delivery select <timeslot-id> --yes [--accept-changes]
+ 
+ Lists bookable slots grouped by day. --all also shows sold-out ones. The slot
+-the account already reserved is shown as "reserved".
++the account already reserved is shown as "reserved". Availability 0 means
++bookable, 1 means closed or sold out.
++
++select reserves only when nothing changes for that slot. If prices or
++availability differ, it reports the changes and does not reserve; rerun with
++--accept-changes to reserve and accept them (as the website's confirm dialog).
+ 
+ Example:
+   nemlig delivery slots --days 7`,
+@@ -246,6 +251,7 @@ const FLAGS = {
+   "--history": "history",
+   "--links": "links",
+   "--last": "last",
++  "--accept-changes": "acceptChanges",
+ };
+ const NUMBERS = new Set(["--limit", "--offset", "--days", "--orders", "--min-orders"]);
+ 
+@@ -286,6 +292,7 @@ export function parseArgs(argv) {
+     output: null,
+     history: false,
+     links: false,
++    acceptChanges: false,
+   };
+   const positional = [];
+   let optionsEnded = false;
+@@ -711,10 +718,23 @@ export async function run(
+         throw new Error("delivery select requires a numeric timeslot-id");
+       }
+       requireYes(options, "Selecting a delivery time");
+-      const result = await api.selectDeliveryTime(values[0]);
+-      output = options.json
+-        ? JSON.stringify(result, null, 2)
+-        : "Delivery time reserved. Run `nemlig checkout status` to verify it.";
++      let result = await api.selectDeliveryTime(values[0]);
++      if (!result?.IsReserved && options.acceptChanges) {
++        result = await api.selectDeliveryTime(values[0], { acceptChanges: true });
++      }
++      if (options.json) {
++        output = JSON.stringify(result, null, 2);
++      } else if (result?.IsReserved) {
++        output = `Delivery time reserved for ${result.MinutesReserved} minutes.`;
++      } else {
++        const changes = (result?.ProductLineDiffs ?? [])
++          .map((line) =>
++            `  ${line.ProductName}: ${line.Undeliverable ? "undeliverable" : `${line.AmountDiff > 0 ? "+" : ""}${line.AmountDiff} kr`}`
++          )
++          .join("\n");
++        output = `Not reserved: the basket changes for this slot.\n${changes}\nRerun with --accept-changes to reserve and accept.`;
++        process.exitCode = 1;
++      }
+     } else {
+       throw new Error(`Unknown delivery command: ${subcommand}`);
+     }
+diff --git a/src/format.js b/src/format.js
+index ccc735a..50094df 100644
+--- a/src/format.js
++++ b/src/format.js
+@@ -469,9 +469,9 @@ export function renderInvoice({ orderNumber, path, bytes }) {
+ }
+ 
+ /**
+- * GetDeliveryDays nests slots as DayRangeHours[].DayHours[]. Availability is 1
+- * when the slot can still be booked; the slot the account already reserved
+- * reports 0 with IsSelected true.
++ * GetDeliveryDays nests slots as DayRangeHours[].DayHours[]. Availability is 0
++ * when the slot can still be booked and 1 when it is closed or sold out
++ * (observed 2026-10: past slots report 1, and a 0 slot reserved successfully).
+  */
+ export function collectDeliveryDays(result) {
+   return (result?.DayRangeHours ?? []).map((day) => ({
+@@ -481,7 +481,7 @@ export function collectDeliveryDays(result) {
+       start: slot.StartHour,
+       end: slot.EndHour,
+       price: slot.DeliveryPrice,
+-      available: slot.Availability === 1,
++      available: slot.Availability === 0,
+       selected: slot.IsSelected === true,
+       cheap: slot.IsCheapHour === true,
+       free: slot.IsFreeHour === true,
+-- 
+2.43.0
+

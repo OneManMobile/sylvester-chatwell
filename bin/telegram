@@ -1,0 +1,481 @@
+#!/bin/sh
+''':'
+py="$(dirname "$0")/../.venv/bin/python"
+[ -x "$py" ] || py=python3
+exec "$py" "$0" "$@"
+'''
+"""Sylvester's Telegram side: poll, answer and manage who may talk to him.
+
+Usage:
+  bin/telegram status                    bot username, allowed people/groups, pending
+  bin/telegram inbox                     fetch new messages (getUpdates) → JSON
+  bin/telegram send CHAT_ID [--text T] [--photo PATH] [--reply-to MSG_ID]
+                                         text from --text or stdin; only allowed chats
+  bin/telegram typing CHAT_ID            show "typing …"
+  bin/telegram done ID...                mark inbox messages as handled
+  bin/telegram allow ID --name NAME [--role adult|child] [--owner]
+                                         people: positive ids; groups: negative ids
+  bin/telegram deny ID                   remove access; drop and ignore that chat
+  bin/telegram list                      allowed people/groups + senders waiting
+
+Exit: 0 ok, 1 Telegram refused / not allowed, 3 not connected
+(bin/telegram-connect), 4 Telegram unreachable, 64 usage.
+
+Messages are polled, not pushed: a Grok Bot routine runs `inbox` every few
+minutes. Each new message is stored as a spool file before the update offset
+advances, so nothing is lost if a run stops half-way; spooled messages are
+listed by every `inbox` until `done`. Senders/chats not allowed yet are kept
+aside under unknown/ and reported once in "unknown"; `allow` moves their kept
+messages into the inbox, `deny` drops them. Photos and documents (≤ 10 MB)
+from allowed chats are saved in <household>/inbox/<date>/.
+"""
+import argparse
+import json
+import os
+import re
+import shutil
+import sys
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.dont_write_bytecode = True
+sys.path.insert(0, HERE)
+import _telegram as tg  # noqa: E402
+
+MAX_TEXT = 4096
+MAX_CAPTION = 1024
+MAX_FILE = 10 * 1024 * 1024
+DONE_DAYS = 14
+
+
+def out(value) -> None:
+    print(json.dumps(value, ensure_ascii=False, indent=1))
+
+
+def fail(code: int, message: str) -> int:
+    out({"error": message})
+    return code
+
+
+def sub(name: str) -> str:
+    path = os.path.join(tg.tg_dir(), name)
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    return path
+
+
+def allowed_path() -> str:
+    return os.path.join(tg.tg_dir(), "allowed.json")
+
+
+def load_allowed() -> dict:
+    data = tg.read_json(allowed_path(), {})
+    for key in ("people", "groups"):
+        data.setdefault(key, {})
+    data.setdefault("denied", [])
+    return data
+
+
+def lookup(allowed: dict, chat_id):
+    key = str(chat_id)
+    return allowed["people"].get(key) or allowed["groups"].get(key)
+
+
+def bot_info(token: str, refresh: bool = False) -> dict:
+    path = os.path.join(tg.tg_dir(), "bot.json")
+    info = tg.read_json(path, {})
+    if refresh or not info.get("username"):
+        me = tg.call(token, "getMe")
+        info = {"id": me.get("id"), "username": me.get("username", ""), "name": me.get("first_name", "")}
+        tg.write_json(path, info)
+    return info
+
+
+def person_name(user: dict) -> str:
+    name = " ".join(x for x in (user.get("first_name"), user.get("last_name")) if x)
+    return name or user.get("username") or str(user.get("id", ""))
+
+
+def safe_name(name: str) -> str:
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", os.path.basename(name or "")).strip("._")
+    return name[:80] or "file"
+
+
+# --- inbox -----------------------------------------------------------------
+
+def addressed_to_bot(msg: dict, bot: dict) -> tuple:
+    username = (bot.get("username") or "").lower()
+    text = msg.get("text") or msg.get("caption") or ""
+    mention = False
+    for entity in (msg.get("entities") or []) + (msg.get("caption_entities") or []):
+        if entity.get("type") == "mention":
+            word = text[entity["offset"]:entity["offset"] + entity["length"]]
+            mention = mention or (username and word.lower() == f"@{username}")
+        elif entity.get("type") == "text_mention":
+            mention = mention or (entity.get("user") or {}).get("id") == bot.get("id")
+        elif entity.get("type") == "bot_command":
+            word = text[entity["offset"]:entity["offset"] + entity["length"]].lower()
+            mention = mention or "@" not in word or word.endswith(f"@{username}")
+    if username and not mention:
+        mention = f"@{username}" in text.lower()
+    reply = msg.get("reply_to_message") or {}
+    reply_to_bot = bool(reply) and (reply.get("from") or {}).get("id") == bot.get("id")
+    return bool(mention), reply_to_bot
+
+
+def save_files(token: str, msg: dict, update_id: int) -> tuple:
+    """Download photo (largest) / document ≤ 10 MB. Returns (files, skipped)."""
+    wanted = []
+    if msg.get("photo"):
+        best = max(msg["photo"], key=lambda p: (p.get("file_size") or 0, p.get("width", 0) * p.get("height", 0)))
+        wanted.append((best, f"photo-{update_id}.jpg"))
+    if msg.get("document"):
+        doc = msg["document"]
+        wanted.append((doc, f"{update_id}-{safe_name(doc.get('file_name') or 'document')}"))
+    files, skipped = [], []
+    if not wanted:
+        return files, skipped
+    folder = os.path.join(tg.household_dir(), "inbox", time.strftime("%Y-%m-%d", time.localtime(msg.get("date") or time.time())))
+    for item, name in wanted:
+        if (item.get("file_size") or 0) > MAX_FILE:
+            skipped.append({"name": name, "reason": "larger than 10 MB"})
+            continue
+        try:
+            info = tg.call(token, "getFile", {"file_id": item["file_id"]})
+            if not info.get("file_path") or (info.get("file_size") or 0) > MAX_FILE:
+                skipped.append({"name": name, "reason": "not downloadable"})
+                continue
+            os.makedirs(folder, exist_ok=True)
+            dest = os.path.join(folder, name)
+            tg.download(token, info["file_path"], dest, MAX_FILE)
+            files.append(dest)
+        except tg.ApiError as error:
+            skipped.append({"name": name, "reason": str(error)})
+    return files, skipped
+
+
+def summarize(update_id: int, msg: dict, allowed: dict, bot: dict) -> dict:
+    chat, user = msg.get("chat") or {}, msg.get("from") or {}
+    person = allowed["people"].get(str(user.get("id"))) or {}
+    text = msg.get("text") or msg.get("caption") or ""
+    reply = msg.get("reply_to_message") or {}
+    mention, reply_to_bot = addressed_to_bot(msg, bot)
+    entry = {
+        "id": update_id,
+        "message_id": msg.get("message_id"),
+        "chat_id": chat.get("id"),
+        "chat_type": chat.get("type"),
+        "chat_title": chat.get("title") or "",
+        "from_id": user.get("id"),
+        "from_name": person.get("name") or person_name(user),
+        # Not personally allowed (a member of an allowed group): same limits as a child.
+        "role": person.get("role") or "member",
+        "owner": bool(person.get("owner")),
+        "text": text,
+        "reply_to_text": (reply.get("text") or reply.get("caption") or "")[:500],
+        "reply_to_bot": reply_to_bot,
+        "mentions_bot": mention,
+        "files": [],
+        "date": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(msg.get("date") or 0)),
+    }
+    if msg.get("voice") or msg.get("audio") or msg.get("video_note"):
+        entry["voice"] = True
+    if msg.get("video") or msg.get("sticker") or msg.get("location") or msg.get("contact"):
+        entry["unsupported"] = next(k for k in ("video", "sticker", "location", "contact") if msg.get(k))
+    return entry
+
+
+def keep_unknown(update_id: int, msg: dict):
+    """Keep a message from a chat that isn't allowed; return a report the first time."""
+    chat, user = msg.get("chat") or {}, msg.get("from") or {}
+    folder = os.path.join(sub("unknown"), str(chat.get("id")))
+    first = not os.path.isdir(folder)
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    tg.write_json(os.path.join(folder, f"{update_id}.json"), {"update_id": update_id, "message": msg})
+    if not first:
+        return None
+    return {
+        "id": chat.get("id"),
+        "kind": "person" if chat.get("type") == "private" else "group",
+        "name": person_name(user),
+        "from_id": user.get("id"),
+        "chat_title": chat.get("title") or "",
+        "text": (msg.get("text") or msg.get("caption") or "")[:100],
+    }
+
+
+def spool_message(token: str, update_id: int, msg: dict, allowed: dict, bot: dict) -> None:
+    entry = summarize(update_id, msg, allowed, bot)
+    entry["files"], skipped = save_files(token, msg, update_id)
+    if skipped:
+        entry["files_skipped"] = skipped
+    tg.write_json(os.path.join(sub("spool"), f"{update_id}.json"), entry)
+
+
+def cmd_inbox(args) -> int:
+    token = tg.load_token()
+    allowed = load_allowed()
+    bot = bot_info(token)
+    offset_path = os.path.join(tg.tg_dir(), "offset")
+    offset = int(tg.read_json(offset_path, 0) or 0)
+    unknown = []
+    while True:
+        params = {"timeout": 0, "limit": 100, "allowed_updates": ["message"]}
+        if offset:
+            params["offset"] = offset
+        updates = tg.call(token, "getUpdates", params)
+        if not updates:
+            break
+        for update in updates:
+            update_id = int(update["update_id"])
+            msg = update.get("message")
+            if msg and not (msg.get("from") or {}).get("is_bot"):
+                chat_id = (msg.get("chat") or {}).get("id")
+                if lookup(allowed, chat_id):
+                    spool_message(token, update_id, msg, allowed, bot)
+                elif chat_id not in allowed["denied"]:
+                    report = keep_unknown(update_id, msg)
+                    if report:
+                        unknown.append(report)
+            offset = update_id + 1
+            tg.write_json(offset_path, offset)  # only after the message is stored
+        if len(updates) < 100:
+            break
+    messages = []
+    spool = sub("spool")
+    for name in sorted(os.listdir(spool), key=lambda n: int(n.split(".")[0]) if n.split(".")[0].isdigit() else 0):
+        if name.endswith(".json"):
+            entry = tg.read_json(os.path.join(spool, name), None)
+            if entry:
+                messages.append(entry)
+    out({"messages": messages, "unknown": unknown})
+    return 0
+
+
+# --- send / typing ---------------------------------------------------------
+
+def split_text(text: str, limit: int = MAX_TEXT) -> list:
+    parts = []
+    while len(text) > limit:
+        cut = text.rfind("\n", 0, limit)
+        if cut < limit // 2:
+            cut = text.rfind(" ", 0, limit)
+        if cut < limit // 2:
+            cut = limit
+        parts.append(text[:cut].rstrip())
+        text = text[cut:].lstrip("\n ")
+    if text.strip():
+        parts.append(text)
+    return parts
+
+
+def require_allowed(chat_id: str) -> bool:
+    return lookup(load_allowed(), chat_id) is not None
+
+
+def cmd_send(args) -> int:
+    token = tg.load_token()
+    if not require_allowed(args.chat_id):
+        return fail(1, "chat not allowed — only allowed people/groups (bin/telegram list)")
+    text = args.text if args.text is not None else ("" if sys.stdin.isatty() else sys.stdin.read())
+    text = text.strip("\n")
+    if not text and not args.photo:
+        return fail(64, "nothing to send: give --text, text on stdin, or --photo")
+    if args.photo and not os.path.isfile(args.photo):
+        return fail(64, f"photo not found: {args.photo}")
+    reply = {"message_id": args.reply_to, "allow_sending_without_reply": True} if args.reply_to else None
+    sent = []
+    if args.photo:
+        caption = text if len(text) <= MAX_CAPTION else None
+        result = tg.call_multipart(token, "sendPhoto", {"chat_id": args.chat_id, "caption": caption,
+                                                        "reply_parameters": reply}, "photo", args.photo)
+        sent.append(result.get("message_id"))
+        if caption is not None:
+            text = ""
+        reply = None
+    for part in split_text(text):
+        params = {"chat_id": args.chat_id, "text": part, "link_preview_options": {"is_disabled": True}}
+        if reply:
+            params["reply_parameters"] = reply
+            reply = None
+        sent.append(tg.call(token, "sendMessage", params).get("message_id"))
+    out({"sent": sent})
+    return 0
+
+
+def cmd_typing(args) -> int:
+    token = tg.load_token()
+    if not require_allowed(args.chat_id):
+        return fail(1, "chat not allowed")
+    tg.call(token, "sendChatAction", {"chat_id": args.chat_id, "action": "typing"})
+    out({"ok": True})
+    return 0
+
+
+# --- done ------------------------------------------------------------------
+
+def cmd_done(args) -> int:
+    spool, done = sub("spool"), sub("done")
+    moved, missing = [], []
+    now = time.time()
+    for item in args.ids:
+        if not item.isdigit():
+            return fail(64, f"not an inbox id: {item}")
+        source = os.path.join(spool, f"{item}.json")
+        if os.path.exists(source):
+            target = os.path.join(done, f"{item}.json")
+            os.replace(source, target)
+            os.utime(target, (now, now))
+            moved.append(int(item))
+        else:
+            missing.append(int(item))
+    for name in os.listdir(done):
+        path = os.path.join(done, name)
+        if now - os.path.getmtime(path) > DONE_DAYS * 86400:
+            os.remove(path)
+    out({"done": moved, "not_found": missing})
+    return 0
+
+
+# --- allow / deny / list / status -------------------------------------------
+
+def pending_unknown() -> list:
+    root = sub("unknown")
+    waiting = []
+    for chat in sorted(os.listdir(root)):
+        folder = os.path.join(root, chat)
+        names = sorted(n for n in os.listdir(folder) if n.endswith(".json")) if os.path.isdir(folder) else []
+        if not names:
+            continue
+        msg = (tg.read_json(os.path.join(folder, names[0]), {}) or {}).get("message") or {}
+        waiting.append({"id": int(chat), "name": person_name(msg.get("from") or {}),
+                        "chat_title": (msg.get("chat") or {}).get("title") or "", "messages": len(names),
+                        "text": (msg.get("text") or msg.get("caption") or "")[:100]})
+    return waiting
+
+
+def parse_id(value: str) -> int:
+    if not re.fullmatch(r"-?[0-9]{1,20}", value or "") or int(value) == 0:
+        raise SystemExit(fail(64, f"not a Telegram id: {value}"))
+    return int(value)
+
+
+def cmd_allow(args) -> int:
+    chat_id = parse_id(args.id)
+    allowed = load_allowed()
+    if chat_id > 0:
+        entry = {"name": args.name, "role": args.role}
+        if args.owner or (allowed["people"].get(str(chat_id)) or {}).get("owner"):
+            entry["owner"] = True
+        allowed["people"][str(chat_id)] = entry
+    else:
+        allowed["groups"][str(chat_id)] = {"name": args.name}
+    allowed["denied"] = [x for x in allowed["denied"] if x != chat_id]
+    tg.write_json(allowed_path(), allowed)
+    # Messages kept aside while they weren't allowed now go into the inbox.
+    folder = os.path.join(sub("unknown"), str(chat_id))
+    released = 0
+    if os.path.isdir(folder):
+        token = tg.load_token()
+        bot = bot_info(token)
+        for name in sorted(os.listdir(folder)):
+            kept = tg.read_json(os.path.join(folder, name), None)
+            if kept:
+                spool_message(token, kept["update_id"], kept["message"], allowed, bot)
+                released += 1
+        shutil.rmtree(folder)
+    out({"allowed": {"id": chat_id, **(allowed["people"].get(str(chat_id)) or allowed["groups"][str(chat_id)])},
+         "messages_to_inbox": released})
+    return 0
+
+
+def cmd_deny(args) -> int:
+    chat_id = parse_id(args.id)
+    allowed = load_allowed()
+    removed = bool(allowed["people"].pop(str(chat_id), None) or allowed["groups"].pop(str(chat_id), None))
+    if chat_id not in allowed["denied"]:
+        allowed["denied"].append(chat_id)
+    tg.write_json(allowed_path(), allowed)
+    shutil.rmtree(os.path.join(sub("unknown"), str(chat_id)), ignore_errors=True)
+    spool = sub("spool")
+    dropped = 0
+    for name in os.listdir(spool):
+        entry = tg.read_json(os.path.join(spool, name), {}) or {}
+        if entry.get("chat_id") == chat_id:
+            os.remove(os.path.join(spool, name))
+            dropped += 1
+    out({"denied": chat_id, "was_allowed": removed, "inbox_dropped": dropped})
+    return 0
+
+
+def listing() -> dict:
+    allowed = load_allowed()
+    return {
+        "people": [{"id": int(k), **v} for k, v in allowed["people"].items()],
+        "groups": [{"id": int(k), **v} for k, v in allowed["groups"].items()],
+        "waiting": pending_unknown(),
+    }
+
+
+def cmd_list(args) -> int:
+    out(listing())
+    return 0
+
+
+def cmd_status(args) -> int:
+    token = tg.load_token()
+    bot = bot_info(token, refresh=True)
+    spool = sub("spool")
+    out({"connected": True, "bot": f"@{bot['username']}", "link": f"https://t.me/{bot['username']}",
+         **listing(), "pending": len([n for n in os.listdir(spool) if n.endswith(".json")])})
+    return 0
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        raise SystemExit(fail(64, message))
+
+
+def main() -> int:
+    parser = Parser(prog="telegram", description="Sylvester's Telegram side: poll, answer and manage who may talk to him.")
+    commands = parser.add_subparsers(dest="command", parser_class=Parser)
+    commands.add_parser("status").set_defaults(func=cmd_status)
+    commands.add_parser("inbox").set_defaults(func=cmd_inbox)
+    send = commands.add_parser("send")
+    send.add_argument("chat_id")
+    send.add_argument("--text")
+    send.add_argument("--photo")
+    send.add_argument("--reply-to", type=int)
+    send.set_defaults(func=cmd_send)
+    typing = commands.add_parser("typing")
+    typing.add_argument("chat_id")
+    typing.set_defaults(func=cmd_typing)
+    done = commands.add_parser("done")
+    done.add_argument("ids", nargs="+")
+    done.set_defaults(func=cmd_done)
+    allow = commands.add_parser("allow")
+    allow.add_argument("id")
+    allow.add_argument("--name", required=True)
+    allow.add_argument("--role", choices=("adult", "child"), default="adult")
+    allow.add_argument("--owner", action="store_true", help="the person who runs Sylvester in the Grok Bot app")
+    allow.set_defaults(func=cmd_allow)
+    deny = commands.add_parser("deny")
+    deny.add_argument("id")
+    deny.set_defaults(func=cmd_deny)
+    commands.add_parser("list").set_defaults(func=cmd_list)
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help(sys.stderr)
+        return 64
+    try:
+        return args.func(args)
+    except tg.NotConnected as error:
+        return fail(3, f"Telegram not connected ({error}) — run bin/telegram-connect")
+    except tg.Unreachable as error:
+        return fail(4, str(error))
+    except tg.ApiError as error:
+        return fail(1, f"Telegram refused: {error}")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

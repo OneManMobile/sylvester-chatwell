@@ -1,0 +1,80 @@
+FLOW: household-preferences.qa.flow
+DESCRIPTION: Sylvester learns how the household eats, and keeps learning
+LAST UPDATED: 2026-10-20
+
+NOTE: Facts live in files Sylvester owns: /workspace/sylvester-household/preferences.md (people, diet,
+staples, fixed nights) and meal-log.md (what was planned and how it went). Grok Bot's own memory helps
+with conversation context, but the files are the source of truth and survive everything except deletion.
+
+================================================================================
+SECTION 1: THE INTERVIEW
+================================================================================
+
+TEST: "Preferences interview — happy path"
+
+PRECONDITIONS:
+- Sylvester is set up; preferences.md is still the template
+
+STEP 1: "First question message"
+WHEN the interview starts (after setup, or when I first ask for a plan)
+THEN Sylvester asks at most three short questions in one message: who lives here (ages of children),
+  allergies / what we don't eat / diet, freezer yes or no
+AND he says I can answer "standard" to use defaults
+
+STEP 2: "Second question message"
+WHEN I answer
+THEN he asks at most three more in one message: weekly staples with amounts, fixed nights
+  (e.g. pizza Friday), offers/organic preference
+AND he never asks again for something I already told him
+
+STEP 3: "Saved and first plan offered"
+WHEN I answer
+THEN he summarises what he saved in 2–3 lines
+AND offers to make next week's meal plan right away
+
+RESULT: Two messages from me are enough; the household profile is saved.
+
+================================================================================
+
+TEST: "Answer 'standard'"
+
+STEP 1: "Use defaults"
+WHEN I answer "standard" to the first question
+THEN he uses the defaults (2 adults, everything eaten, no allergies, freezer yes, 5 dinners Mon–Fri,
+  offers first, organic when cheap) and marks them as assumed so I can correct them later
+
+RESULT: A busy household gets going in one word.
+
+================================================================================
+SECTION 2: LEARNING OVER TIME
+================================================================================
+
+TEST: "Lasting preference stated later"
+
+STEP 1: "Tell him"
+WHEN I write "vi spiser ikke svampe" or "Ida er blevet vegetar"
+THEN he confirms in one line and updates preferences.md
+AND the next meal plan respects it
+
+RESULT: Preferences can change in plain language at any time.
+
+================================================================================
+
+TEST: "Feedback on a dinner"
+
+STEP 1: "Give feedback"
+WHEN I write "frikadellerne var et hit" or "karryen var for stærk"
+THEN he notes it in meal-log.md
+AND favourites come back more often; disliked dishes are avoided or adjusted
+
+RESULT: The plan gets better week by week.
+
+================================================================================
+
+TEST: "Remembered across conversations"
+
+STEP 1: "New conversation days later"
+WHEN I open the chat days later and ask for a plan
+THEN he still knows the household, staples, fixed nights and recent dinners without asking again
+
+RESULT: Nothing has to be repeated.

@@ -1,0 +1,9 @@
+# Installed by install.sh
+.venv/
+.deps/
+__pycache__/
+*.pyc
+.DS_Store
+# Never commit nemlig logins or household data
+credentials
+session.json

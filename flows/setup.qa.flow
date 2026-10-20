@@ -1,0 +1,101 @@
+FLOW: setup.qa.flow
+DESCRIPTION: From nothing to a working Sylvester in the Grok Bot app — subscription, app, Bot, self-install, updates
+LAST UPDATED: 2026-10-20
+
+NOTE: The human only ever talks to Sylvester in the Grok Bot app (desktop: x.ai/bot; phone: "Grok Bot"
+in the App Store / Google Play). Everything else happens on the Bot's own cloud computer: the repo is
+cloned to /workspace/sylvester-chatwell, household files live in /workspace/sylvester-household, the
+nemlig login in /workspace/.sylvester. /workspace survives computer updates; installed packages may not,
+which is why every task starts with bin/doctor and falls back to ./install.sh.
+
+================================================================================
+SECTION 1: GETTING GROK BOT
+================================================================================
+
+TEST: "Buy Premium and sign in to the Grok Bot app"
+
+PRECONDITIONS:
+- No Grok subscription yet
+- An account at x.ai with Privacy Mode (not "Privacy Mode (Legacy)") — Legacy blocks Grok Bot
+
+STEP 1: "Buy Premium"
+GIVEN I open x.ai/pricing
+WHEN I buy Grok Premium
+THEN my account shows the Premium plan
+
+STEP 2: "Install and sign in"
+WHEN I download the Grok Bot app from x.ai/bot (or the App Store / Google Play) and sign in
+THEN the app sets up the Bot's computer in the background
+AND I land on "Meet a future teammate"
+
+RESULT: I have the Grok Bot app open with an eligible plan.
+
+================================================================================
+SECTION 2: CREATING SYLVESTER
+================================================================================
+
+TEST: "Create the Bot and point it at the repo — happy path"
+
+PRECONDITIONS:
+- Signed in to the Grok Bot app with Premium
+
+STEP 1: "Create the Bot"
+WHEN I choose "Create your own" and name the Bot "Sylvester"
+THEN an empty chat with Sylvester opens
+
+STEP 2: "Point it at the repo"
+WHEN I send "Set yourself up from https://github.com/OneManMobile/sylvester-chatwell — follow BOT.md"
+THEN Sylvester tells me in a short message that he is installing
+AND within a few minutes he confirms that install and the health check passed
+AND the skills onboarding, nemlig-household, recipe-cards, family-week, telegram and sylvester-chatwell
+  exist in the Bot's skill library
+AND he writes to me in Danish (or my language) as Sylvester Chatwell 🎩
+
+STEP 3: "Next step offered"
+THEN he asks for my nemlig.com e-mail to connect nemlig (connect-nemlig.qa.flow)
+AND if I'd rather skip, he moves on to the preferences interview (household-preferences.qa.flow)
+
+RESULT: Sylvester is installed on his computer and starts onboarding without me touching a terminal.
+
+================================================================================
+
+TEST: "Setup fails"
+
+PRECONDITIONS:
+- The Bot's computer cannot finish ./install.sh (e.g. no network)
+
+STEP 1: "Install fails twice"
+WHEN install or doctor fails twice
+THEN Sylvester tells me the last error line in one message and stops
+AND he does not claim to be set up
+
+RESULT: A broken install is reported plainly, never hidden.
+
+================================================================================
+SECTION 3: KEEPING IT WORKING
+================================================================================
+
+TEST: "Computer was updated or recreated"
+
+PRECONDITIONS:
+- Sylvester was set up before
+- Grok Bot updated or recreated the computer (packages gone, /workspace kept)
+
+STEP 1: "Ask for something that needs the tools"
+WHEN I ask for a meal plan
+THEN Sylvester runs bin/doctor, sees it fail, runs ./install.sh, and continues with my request
+AND my preferences, meal log and nemlig login are still there
+
+RESULT: Recovery is automatic; household data survives.
+
+================================================================================
+
+TEST: "Update to the newest version"
+
+STEP 1: "Ask for an update"
+WHEN I write "opdater dig" / "update yourself"
+THEN Sylvester pulls the repo, re-runs install and doctor, re-saves every skill from the current files
+AND tells me it's done
+AND my household files and nemlig login are unchanged
+
+RESULT: Updates never wipe the household.

@@ -1,0 +1,34 @@
+{
+  "kind": "steps",
+  "lang": "da",
+  "title": "Sylvester Chatwell",
+  "subtitle": "Din egen husbutler i Grok Bot",
+  "kicker": "Kom i gang på 5 trin",
+  "steps": [
+    {
+      "title": "Hent Grok Bot",
+      "detail": "Køb Grok Premium på x.ai/pricing, hent appen Grok Bot (x.ai/bot) og log ind"
+    },
+    {
+      "title": "Opret din butler",
+      "detail": "Opret en Bot ved navn Sylvester og skriv: “Sæt dig op fra github.com/OneManMobile/sylvester-chatwell”"
+    },
+    {
+      "title": "Forbind nemlig.com",
+      "detail": "Han åbner en login-side. Tryk Take over, skriv din adgangskode, tryk Log ind og så I’m done"
+    },
+    {
+      "title": "Fortæl, hvordan I spiser",
+      "detail": "Et par korte spørgsmål: hvem spiser med, kost og allergier, basisvarer, pizzaaften?"
+    },
+    {
+      "title": "Bed om næste uges madplan",
+      "detail": "“Lav næste uges madplan og fyld kurven.” Han bestiller aldrig – du trykker selv Bestil"
+    }
+  ],
+  "bonus": {
+    "title": "Bed om et opskriftskort",
+    "detail": "Til en af ugens dage – klar til køkkenbordet"
+  },
+  "footer": "github.com/OneManMobile/sylvester-chatwell"
+}

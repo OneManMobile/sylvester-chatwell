@@ -1,0 +1,205 @@
+From fa22a3ba08eef283281eafecfe52171d00c14454 Mon Sep 17 00:00:00 2001
+From: Sylvester <sylvester@localhost>
+Date: Tue, 6 Oct 2026 15:05:43 +0200
+Subject: [PATCH 2/2] offers: list /tilbud products with campaign prices
+ (nemlig offers)
+
+---
+ src/api.js | 51 +++++++++++++++++++++++++++++++++
+ src/cli.js | 83 ++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 134 insertions(+)
+
+diff --git a/src/api.js b/src/api.js
+index 0bbe5d8..e7b4137 100644
+--- a/src/api.js
++++ b/src/api.js
+@@ -583,6 +583,57 @@ export class NemligApi {
+     return this.accountFetch(url, { method: "POST", body: null });
+   }
+ 
++  /**
++   * Every product on nemlig.com's offers page (/tilbud), grouped by the
++   * page's sections. The page JSON lists sections with a ProductGroupId; the
++   * products come from the same signed-in endpoint the website uses, priced
++   * for the account's delivery zone and timeslot.
++   */
++  async offers({ categories = [] } = {}) {
++    const page = await fetchJson(this.fetchImpl, `${SITE_ORIGIN}/tilbud?GetAsJson=1`, {
++      headers: publicHeaders(),
++    });
++    const wanted = categories.map((name) => name.toLowerCase());
++    const sections = (page?.content ?? []).filter((spot) =>
++      spot?.ProductGroupId && String(spot.TemplateName).startsWith("productlist") &&
++      (!wanted.length || wanted.some((name) => String(spot.Heading).toLowerCase().includes(name)))
++    );
++    if (!sections.length) {
++      throw new NemligApiError(
++        wanted.length ? `No offer section matches: ${categories.join(", ")}` : "nemlig.com offers page has no product sections",
++      );
++    }
++    const [user, basket, session] = await Promise.all([
++      this.currentUser(),
++      this.getBasket(),
++      this.getSession(),
++    ]);
++    const settings = session.settings;
++    const base = [
++      "/webapi",
++      settings.CombinedProductsAndSitecoreTimestamp,
++      basket?.TimeslotUtc || settings.TimeslotUtc,
++      basket?.DeliveryZoneId ?? settings.DeliveryZoneId,
++      user.DebitorId,
++      "Products",
++    ].join("/");
++    const result = [];
++    for (const section of sections) {
++      const products = [];
++      for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
++        const url = new URL(`${base}/GetByProductGroupId`, SITE_ORIGIN);
++        url.searchParams.set("productGroupId", section.ProductGroupId);
++        url.searchParams.set("pageIndex", String(pageIndex));
++        url.searchParams.set("pagesize", "50");
++        const chunk = await this.accountFetch(url);
++        products.push(...(chunk?.Products ?? []));
++        if (!chunk?.Products?.length || products.length >= (chunk.NumFound ?? 0)) break;
++      }
++      result.push({ section: section.Heading, total: section.TotalProducts, products });
++    }
++    return result;
++  }
++
+   async checkoutStatus() {
+     const basket = await this.getBasket();
+     const [terms, ageRestrictions, settings] = await Promise.all([
+diff --git a/src/cli.js b/src/cli.js
+index 135a83a..f5a61f8 100755
+--- a/src/cli.js
++++ b/src/cli.js
+@@ -49,6 +49,7 @@ Usage:
+   nemlig orders invoice <order-number> [--output <path>] [--json]
+   nemlig delivery slots [--days <n>] [--start <yyyy-mm-dd>] [--all] [--json]
+   nemlig delivery select <timeslot-id> --yes
++  nemlig offers [--category <section>]... [--json]
+   nemlig checkout status [--json]
+   nemlig checkout open
+   nemlig goma search <query> [--store <name>]... [--sale] [--sort <key>]
+@@ -189,6 +190,19 @@ availability differ, it reports the changes and does not reserve; rerun with
+ 
+ Example:
+   nemlig delivery slots --days 7`,
++  offers: `nemlig offers [--category <section>]... [--json]
++
++Every product on nemlig.com's offers page (/tilbud), priced for your account,
++delivery zone and timeslot. --category filters on the page's section names
++(substring, repeatable), e.g. "Kød og fisk", "Mejeri", "Frugt og grønt".
++
++Per product: normal price, offer price per item (multi-buy offers are divided
++by their minimum quantity), minimum quantity, saving in percent and whether it
++is frozen ("frost" in the description). Products listed in several sections
++appear once, under the first.
++
++Example:
++  nemlig offers --category "Kød og fisk" --category Mejeri --json`,
+   checkout: `nemlig checkout status [--json]    check the basket is orderable
+ nemlig checkout open               hand the basket to your browser
+ 
+@@ -293,6 +307,7 @@ export function parseArgs(argv) {
+     history: false,
+     links: false,
+     acceptChanges: false,
++    category: [],
+   };
+   const positional = [];
+   let optionsEnded = false;
+@@ -340,6 +355,10 @@ export function parseArgs(argv) {
+       const raw = takeValue();
+       if (!raw) throw new Error("--store requires a store name");
+       options.store.push(raw);
++    } else if (name === "--category") {
++      const raw = takeValue();
++      if (!raw) throw new Error("--category requires a section name");
++      options.category.push(raw);
+     } else if (name === "--sort") {
+       const raw = takeValue();
+       if (!GOMA_SORTS[raw]) {
+@@ -474,6 +493,55 @@ function requireYes(options, action) {
+   }
+ }
+ 
++/**
++ * One offer product in a stable shape. Multi-buy campaigns ("3 for 85 kr")
++ * report the total for MinQuantity items, so the per-item price divides it.
++ */
++function normalizeOffer(section, product) {
++  const campaign = product.Campaign ?? null;
++  const minQuantity = Math.max(Number(campaign?.MinQuantity) || 1, 1);
++  const campaignPrice = Number(campaign?.CampaignPrice);
++  const price = Number(product.Price);
++  const offerEach = Number.isFinite(campaignPrice) && campaignPrice > 0
++    ? Math.round((campaignPrice / minQuantity) * 100) / 100
++    : price;
++  const description = String(product.Description ?? "");
++  return {
++    section,
++    id: String(product.Id),
++    name: product.Name,
++    brand: product.Brand ?? null,
++    description,
++    price,
++    offerPriceEach: offerEach,
++    minQuantity,
++    offerTotal: Number.isFinite(campaignPrice) && campaignPrice > 0 ? campaignPrice : null,
++    savingPercent: price > 0 ? Math.round((1 - offerEach / price) * 100) : 0,
++    unitPrice: product.UnitPriceCalc ?? null,
++    unitLabel: product.UnitPriceLabel ?? null,
++    frozen: /\bfrost\b|frossen|dybfrost/i.test(description),
++    organic: /øko|økologisk/i.test(`${product.Name} ${description}`),
++  };
++}
++
++function renderOffers(offers) {
++  if (!offers.length) return "No offers found.";
++  const lines = [];
++  let section = null;
++  for (const offer of offers) {
++    if (offer.section !== section) {
++      section = offer.section;
++      lines.push("", `## ${section}`);
++    }
++    const deal = offer.minQuantity > 1
++      ? `${offer.minQuantity} for ${offer.offerTotal} kr (${offer.offerPriceEach} each)`
++      : `${offer.offerPriceEach} kr`;
++    const flags = [offer.frozen ? "FROST" : "", offer.organic ? "øko" : ""].filter(Boolean).join(" ");
++    lines.push(`${offer.id}  ${offer.name} — ${offer.description} — ${offer.price} → ${deal} (-${offer.savingPercent}%)${flags ? `  [${flags}]` : ""}`);
++  }
++  return lines.join("\n").trim();
++}
++
+ /**
+  * Marks an error that is not the caller's syntax (a missing order, an absent
+  * terminal, a cancelled prompt), so the "run --help" hint stays out of the way.
+@@ -738,6 +806,21 @@ export async function run(
+     } else {
+       throw new Error(`Unknown delivery command: ${subcommand}`);
+     }
++  } else if (command === "offers") {
++    if (positional.length) throw new Error("offers accepts no arguments; use --category");
++    const sections = await api.offers({ categories: options.category });
++    const seen = new Set();
++    const offers = [];
++    for (const { section, products } of sections) {
++      for (const product of products) {
++        if (!product?.Id || seen.has(product.Id)) continue;
++        seen.add(product.Id);
++        offers.push(normalizeOffer(section, product));
++      }
++    }
++    output = options.json
++      ? JSON.stringify({ count: offers.length, offers }, null, 2)
++      : renderOffers(offers);
+   } else if (command === "checkout") {
+     const [subcommand = "status", ...values] = positional;
+     if (values.length) throw new Error(`checkout ${subcommand} accepts no arguments`);
+-- 
+2.43.0
+
